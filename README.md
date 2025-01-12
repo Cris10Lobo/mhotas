@@ -1,2 +1,2 @@
 # mhotas
-mobile on throttle-and-stick
+mobile handson throttle-and-stick
