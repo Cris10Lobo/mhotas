@@ -1,0 +1,16 @@
+{
+  "pitch": {
+    "curve": { "dead_zone": 0.05, "expo": 0.6 },
+    "smoothing": 0.5
+  },
+  "roll": {
+    "curve": { "dead_zone": 0.05, "expo": 0.6, "invert": false },
+    "smoothing": 0.5
+  },
+  "rudder": {
+    "curve": { "invert": true }
+  },
+  "throttle": {
+    "curve": { "dead_zone": 0.05 }
+  }
+}

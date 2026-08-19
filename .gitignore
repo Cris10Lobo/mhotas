@@ -1,25 +1,31 @@
-# Binaries for programs and plugins
+# Go
+/server/mhotas-server
+/server/spike-simconnect
+/tools/udp-fake-phone/udp-fake-phone
+/tools/udp-fake-phone/udpfakephone
 *.exe
-*.exe~
-*.dll
-*.so
-*.dylib
-
-# Test binary, built with `go test -c`
 *.test
 
-# Output of the go coverage tool, specifically when used with LiteIDE
-*.out
+# Flutter / Dart
+app/.dart_tool/
+app/.flutter-plugins
+app/.flutter-plugins-dependencies
+app/.packages
+app/build/
+app/android/.gradle/
+app/android/build/
+app/android/app/build/
+app/android/local.properties
+app/ios/Flutter/Flutter.framework
+app/ios/Flutter/Flutter.podspec
+app/ios/Pods/
+app/**/GeneratedPluginRegistrant.*
+app/pubspec.lock
 
-# Dependency directories (remove the comment below to include it)
-# vendor/
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
 
-# Go workspace file
-go.work
-go.work.sum
-
-# env file
-.env
-
-# workspace
-.vscode
+# Internal tracking doc, not part of the public repo
+docs/milestones.md
