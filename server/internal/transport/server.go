@@ -30,13 +30,14 @@ type Server struct {
 	cfg     config.Config
 	log     *slog.Logger
 
-	mu              sync.Mutex
-	clientAddr      *net.UDPAddr
-	lastAxisAt      time.Time
-	failsafeApplied bool
-	lastButtonEvent map[uint8]uint16
-	lastShaped      map[control.AxisID]float64
-	outSeq          uint16
+	mu                sync.Mutex
+	clientAddr        *net.UDPAddr
+	lastAxisAt        time.Time
+	failsafeApplied   bool
+	lastButtonEvent   map[uint8]uint16
+	lastShaped        map[control.AxisID]float64
+	outSeq            uint16
+	lastBackendWarnAt time.Time
 }
 
 func New(cfg config.Config, backend control.Output, log *slog.Logger) (*Server, error) {
@@ -196,7 +197,25 @@ func (s *Server) applyAxis(id control.AxisID, raw float64, ac config.AxisConfig)
 		return
 	}
 	if err := s.backend.SetAxis(id, shaped); err != nil {
-		s.log.Warn("backend SetAxis failed", "axis", id, "err", err)
+		s.warnBackendFailure("backend SetAxis failed", "axis", id, "err", err)
+	}
+}
+
+// backendWarnInterval throttles repeated backend-write-failure logging
+// (e.g. MSFS2024 not running yet) to once per interval instead of once per
+// call — AXIS packets arrive 30-50x/sec across 4 axes, which floods the log
+// within a second of the backend becoming unreachable.
+const backendWarnInterval = 5 * time.Second
+
+func (s *Server) warnBackendFailure(msg string, args ...any) {
+	s.mu.Lock()
+	throttled := time.Since(s.lastBackendWarnAt) < backendWarnInterval
+	if !throttled {
+		s.lastBackendWarnAt = time.Now()
+	}
+	s.mu.Unlock()
+	if !throttled {
+		s.log.Warn(msg, args...)
 	}
 }
 
@@ -249,7 +268,7 @@ func (s *Server) handleButton(addr *net.UDPAddr, data []byte) {
 		return
 	}
 	if err := s.backend.SetButton(control.ButtonID(btn.ButtonID), btn.Pressed); err != nil {
-		s.log.Warn("backend SetButton failed", "button", btn.ButtonID, "err", err)
+		s.warnBackendFailure("backend SetButton failed", "button", btn.ButtonID, "err", err)
 		return
 	}
 	// Buttons are rare, discrete events (unlike the 30Hz AXIS stream), so
@@ -360,6 +379,6 @@ func (s *Server) applyFailsafe(id control.AxisID, ac config.AxisConfig) {
 	s.lastShaped[id] = 0
 	s.mu.Unlock()
 	if err := s.backend.SetAxis(id, 0); err != nil {
-		s.log.Warn("failsafe SetAxis failed", "axis", id, "err", err)
+		s.warnBackendFailure("failsafe SetAxis failed", "axis", id, "err", err)
 	}
 }
