@@ -1,6 +1,6 @@
 // Command mhotas-server is the PC-side server: it listens for phone
 // control packets over UDP and drives a control.Output backend
-// (log/simconnect/vjoy). See docs/protocol.md.
+// (log/simconnect/vjoy).
 //
 // newBackend is implemented per-OS (backend_windows.go / backend_other.go)
 // since the simconnect/vjoy backends are Windows-only packages — this file

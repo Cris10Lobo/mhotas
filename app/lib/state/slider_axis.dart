@@ -5,7 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 /// directly rather than through Riverpod state, since it updates far more
 /// often (up to 50Hz) than widget-tree state changes should.
 class SliderAxisState {
-  final double throttle; // 0..1
+  final double throttle; // -1..1, negative = reverse thrust
   final double rudder; // -1..1
 
   const SliderAxisState({this.throttle = 0, this.rudder = 0});

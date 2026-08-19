@@ -38,8 +38,8 @@ go run ./cmd/mhotas-server --backend=simconnect --config path/to/config.json
 ```
 
 Several packages (`internal/control/simconnect`, `internal/control/vjoy`, `internal/telemetry`'s real
-source, `internal/simlink`, `cmd/spike-simconnect`) carry `//go:build windows` — they have **zero
-buildable files on non-Windows**, and are only exercised by cross-compiling:
+source, `internal/simlink`) carry `//go:build windows` — they have **zero buildable files on
+non-Windows**, and are only exercised by cross-compiling:
 
 ```sh
 GOOS=windows go build ./...
@@ -129,17 +129,11 @@ overwritten or misrepresented).
 
 ### `internal/simlink` isolates the third-party SimConnect binding
 
-Intended to wrap `github.com/mrlm-net/simconnect`'s actual API so a binding swap — if the SimConnect
-spike finds its axis-SET path unreliable — doesn't ripple through `control/simconnect` and `telemetry`.
-Fallback binding candidates if a swap is ever needed: `micmonay/simconnect`, `JRascagneres/Simconnect-Go`,
-`grumpypixel/msfs2020-simconnect-go`.
-
-### The SimConnect spike gated everything SimConnect-related
-
-`cmd/spike-simconnect` is a throwaway program that answered one question before anything else got built
-on top: can `mrlm-net/simconnect` reliably drive MSFS2024's controls (`TransmitClientEvent`) and read live
-simvars back. Confirmed live against a real MSFS2024 session — see that command's own doc comments for
-what was validated.
+Wraps `github.com/mrlm-net/simconnect`'s actual API so a binding swap — if its axis-SET path ever turns
+out unreliable — doesn't ripple through `control/simconnect` and `telemetry`. Confirmed live against a
+real MSFS2024 session: `TransmitClientEvent` reliably drives the sim's controls and simvars read back
+correctly. Fallback binding candidates if a swap is ever needed: `micmonay/simconnect`,
+`JRascagneres/Simconnect-Go`, `grumpypixel/msfs2020-simconnect-go`.
 
 ### App structure mirrors the server's data flow
 

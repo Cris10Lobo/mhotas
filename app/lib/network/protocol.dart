@@ -71,8 +71,8 @@ String _decodeName(Uint8List field) {
 const int axisPacketSize = headerSize + 16;
 
 /// Continuous stick/throttle/rudder position. No dead-zone or curve is
-/// applied before sending — that's server-side (see docs/protocol.md) —
-/// but the recenter/zero offset (see AttitudeStream) is applied before
+/// applied before sending — that shaping is server-side — but the
+/// recenter/zero offset (see AttitudeStream) is applied before
 /// normalizing, since that corrects for physical grip, not sim response.
 class Axis {
   final double pitch; // -1..1
@@ -208,9 +208,9 @@ class GearPosition {
 
 const int telemetryPacketSize = headerSize + 10;
 
-/// Live aircraft state read from SimConnect, pushed server → phone. See
-/// docs/protocol.md — v1 intentionally ships this fixed small struct
-/// rather than a generic key/value simvar schema.
+/// Live aircraft state read from SimConnect, pushed server → phone. v1
+/// intentionally ships this fixed small struct rather than a generic
+/// key/value simvar schema.
 ///
 /// Every field here exists to close a "double lane" gap for something the
 /// phone can also command: an in-sim change (mouse, keyboard, autothrottle,

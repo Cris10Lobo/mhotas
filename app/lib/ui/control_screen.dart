@@ -21,9 +21,8 @@ class ButtonIds {
 
 /// The primary flying screen, styled after X-Plane Mobile: tilt the phone
 /// for pitch/roll, use the on-screen sliders for throttle/rudder, glance
-/// at large buttons and the flap/gear telemetry readout. See the project
-/// plan for why controls are sized for occasional glances rather than
-/// sustained attention.
+/// at large buttons and the flap/gear telemetry readout — controls are
+/// sized for occasional glances, not sustained attention.
 class ControlScreen extends ConsumerStatefulWidget {
   const ControlScreen({super.key});
 
@@ -46,8 +45,7 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
     _attitudeSub = _attitudeStream.stream.listen((a) {
       if (mounted) setState(() => _attitude = a);
     });
-    // ~30Hz, within the 30-50Hz range specified in docs/protocol.md.
-    _sendTimer = Timer.periodic(const Duration(milliseconds: 33), (_) => _sendAxis());
+    _sendTimer = Timer.periodic(const Duration(milliseconds: 33), (_) => _sendAxis()); // ~30Hz
   }
 
   void _sendAxis() {
@@ -258,11 +256,10 @@ class _TiltIndicator extends StatelessWidget {
 /// accident.
 ///
 /// [synced] is the sim's actual current throttle position (from
-/// TELEMETRY, see docs/protocol.md's "Bidirectional axis sync"). While the
-/// pilot isn't touching the lever, it mirrors [synced] instead of holding
-/// a stale value — so a manual in-sim throttle change shows up here, and
-/// the next drag starts from where the throttle really is instead of
-/// wherever this widget was last left.
+/// TELEMETRY). While the pilot isn't touching the lever, it mirrors
+/// [synced] instead of holding a stale value — so a manual in-sim throttle
+/// change shows up here, and the next drag starts from where the throttle
+/// really is instead of wherever this widget was last left.
 class _ThrottleLever extends StatefulWidget {
   const _ThrottleLever({required this.onChanged, this.synced});
 

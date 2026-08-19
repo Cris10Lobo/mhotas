@@ -10,9 +10,8 @@ const _prefsHostKey = 'mhotas.server.host';
 const _prefsPortKey = 'mhotas.server.port';
 const _defaultPort = 9750;
 
-/// Manual IP:port entry, remembered locally — see docs/protocol.md's
-/// "Discovery / connection (v1: manual only)" section for why this is the
-/// whole of v1's connection UX rather than auto-discovery.
+/// Manual IP:port entry, remembered locally — the whole of v1's connection
+/// UX; auto-discovery is a later addition.
 class ConnectScreen extends ConsumerStatefulWidget {
   const ConnectScreen({super.key});
 

@@ -2,7 +2,7 @@
 
 // Package simconnect implements control.Output by driving MSFS2024
 // through SimConnect, via server/internal/simlink. Validated against a
-// live MSFS2024 session (see server/cmd/spike-simconnect).
+// live MSFS2024 session.
 package simconnect
 
 import (
@@ -24,7 +24,6 @@ const (
 	buttonPause        control.ButtonID = 3
 )
 
-// Backend drives MSFS2024 via SimConnect.
 type Backend struct {
 	client *simlink.Client
 	log    *slog.Logger

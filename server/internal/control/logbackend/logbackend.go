@@ -10,12 +10,10 @@ import (
 	"mhotas/internal/control"
 )
 
-// Backend is a control.Output that logs instead of writing to a simulator.
 type Backend struct {
 	log *slog.Logger
 }
 
-// New returns a Backend that logs to log.
 func New(log *slog.Logger) *Backend {
 	return &Backend{log: log}
 }

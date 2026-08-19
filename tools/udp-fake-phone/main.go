@@ -62,8 +62,8 @@ func sayHello(conn *net.UDPConn, device string) error {
 // pitch/roll/rudder oscillate, throttle ramps up and down — so a human
 // watching the server's log output (or the aircraft, once wired to
 // SimConnect) can visually confirm packets are being applied correctly.
-// It also sends a BUTTON press/release every 5 seconds, 3x redundantly per
-// docs/protocol.md.
+// It also sends a BUTTON press/release every 5 seconds, 3x redundantly so
+// a dropped packet doesn't lose the event.
 func sendAxisSweep(conn *net.UDPConn, rate float64) {
 	interval := time.Duration(float64(time.Second) / rate)
 	ticker := time.NewTicker(interval)

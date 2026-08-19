@@ -4,7 +4,6 @@ import 'dart:typed_data';
 
 import 'protocol.dart' as proto;
 
-/// Connection lifecycle as surfaced to the UI. See docs/protocol.md.
 enum ConnectionStatus {
   disconnected,
   connecting,
@@ -14,8 +13,7 @@ enum ConnectionStatus {
 }
 
 /// Talks the mHOTAS UDP protocol to a running mhotas-server. One socket
-/// handles both directions once HELLO_ACK establishes the session — see
-/// docs/protocol.md for the packet layouts this wraps.
+/// handles both directions once HELLO_ACK establishes the session.
 class UdpClient {
   UdpClient({required this.deviceName});
 
@@ -102,13 +100,13 @@ class UdpClient {
   }
 
   /// Sends one AXIS packet. Called at the app's control-loop rate
-  /// (30-50Hz per docs/protocol.md), not per-frame.
+  /// (30-50Hz), not per-frame.
   void sendAxis(proto.Axis axis) {
     _send(proto.encodeAxis(_nextSeq(), axis));
   }
 
-  /// Sends a BUTTON event 3x in quick succession for redundancy, per
-  /// docs/protocol.md.
+  /// Sends a BUTTON event 3x in quick succession so a dropped UDP packet
+  /// doesn't lose it.
   void sendButton(proto.Button button) {
     for (var i = 0; i < 3; i++) {
       _send(proto.encodeButton(_nextSeq(), button));

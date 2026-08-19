@@ -4,7 +4,7 @@
 // from the rest of the server (server/internal/control/simconnect and
 // server/internal/telemetry), so a binding swap doesn't ripple through the
 // rest of the codebase. Connection pattern and event names below were
-// validated against a live MSFS2024 session (see server/cmd/spike-simconnect).
+// validated against a live MSFS2024 session.
 package simlink
 
 import (
@@ -37,7 +37,7 @@ const (
 	AxisRange = 16383
 
 	// Telemetry read: flap handle, gear position, throttle lever position,
-	// mirroring cmd/spike-simconnect's validated setupTelemetryRead.
+	// parking brake state.
 	defAircraftState uint32 = 100
 	reqAircraftState uint32 = 200
 )
@@ -65,7 +65,6 @@ type aircraftStateData struct {
 	ParkingBrakeSet        int32
 }
 
-// AircraftState is live aircraft state read back from SimConnect.
 type AircraftState struct {
 	FlapHandleIndex        int32
 	FlapNumHandlePositions int32
@@ -73,15 +72,14 @@ type AircraftState struct {
 	// between mean the gear is in transit. Uses GEAR POSITION (percent),
 	// not GEAR HANDLE POSITION (the commanded handle state, which can't
 	// distinguish "down and locked" from "still retracting/extending") —
-	// resolves a gap flagged in cmd/spike-simconnect. Not yet confirmed
-	// against a live sim.
+	// resolves a gap in an earlier approach that used GEAR HANDLE POSITION.
+	// Not yet confirmed against a live sim.
 	GearPositionPercent int32
 	// ThrottleLeverPercent is GENERAL ENG THROTTLE LEVER POSITION:1,
 	// -100..100 (negative = reverse) — the throttle lever's actual current
 	// position in the sim, independent of what control/simconnect last
 	// commanded. Feeds telemetry.Source so the phone can mirror manual
-	// in-sim throttle changes instead of fighting them — see
-	// docs/protocol.md's "Bidirectional axis sync". Not yet confirmed
+	// in-sim throttle changes instead of fighting them. Not yet confirmed
 	// against a live sim.
 	ThrottleLeverPercent int32
 	// ParkingBrakeSet is BRAKE PARKING POSITION, 0 or 1 — same
@@ -111,9 +109,9 @@ func (c *Client) Paused() bool {
 }
 
 // Connect starts the SimConnect manager in the background and returns
-// immediately; it does not wait for MSFS2024 to be reachable; auto-
+// immediately; it does not wait for MSFS2024 to be reachable — auto-
 // reconnect (sim not running yet / paused / restarted) is handled
-// internally, matching cmd/spike-simconnect's validated behavior.
+// internally, confirmed against a live sim.
 func Connect(ctx context.Context, log *slog.Logger) *Client {
 	c := &Client{log: log}
 
@@ -144,7 +142,7 @@ func Connect(ctx context.Context, log *slog.Logger) *Client {
 
 	// SimConnect's own Pause system event, auto-subscribed by the manager
 	// on connect — ground truth for Client.Paused(), not a locally-tracked
-	// guess of whether our last PAUSE_TOGGLE tap should have flipped it.
+	// guess of whether our last SetPause call should have flipped it.
 	_ = c.mgr.OnPause(func(paused bool) { c.paused.Store(paused) })
 
 	go func() {
@@ -181,8 +179,7 @@ func setupEvents(client engine.Client) {
 }
 
 // setupTelemetryRead registers the aircraft-state data definition and
-// requests updates once per second, mirroring cmd/spike-simconnect's
-// validated setupTelemetryRead.
+// requests updates once per second.
 func setupTelemetryRead(client engine.Client) {
 	client.AddToDataDefinition(defAircraftState, "FLAPS HANDLE INDEX", "number", types.SIMCONNECT_DATATYPE_INT32, 0, 0)
 	client.AddToDataDefinition(defAircraftState, "FLAPS NUM HANDLE POSITIONS", "number", types.SIMCONNECT_DATATYPE_INT32, 0, 1)
@@ -307,7 +304,6 @@ func (c *Client) SetPause(paused bool) error {
 	return c.transmit(eventPauseSet, data)
 }
 
-// Close stops the SimConnect manager.
 func (c *Client) Close() error {
 	return c.mgr.Stop()
 }

@@ -1,10 +1,8 @@
 import 'package:flutter/material.dart';
 
-/// MVP-minimal by design — see the project plan. Curve/dead-zone editing
-/// stays server-config-file-only (server/internal/config) until Phase 3's
-/// remote-settings-sync feature; this screen currently has nothing to show
-/// beyond what's already on ConnectScreen, and exists as a placeholder for
-/// that later work.
+/// MVP-minimal by design: curve/dead-zone editing stays server-config-file-
+/// only (server/internal/config) until a later remote-settings-sync
+/// feature; this screen exists as a placeholder for that.
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
 

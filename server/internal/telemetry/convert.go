@@ -19,7 +19,6 @@ type rawState struct {
 	Paused                 bool
 }
 
-// toTelemetry maps a raw simlink reading to the wire protocol's Telemetry packet.
 func toTelemetry(r rawState) protocol.Telemetry {
 	return protocol.Telemetry{
 		FlapHandleIndex:    int8(r.FlapHandleIndex),
