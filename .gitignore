@@ -1,0 +1,31 @@
+# Go
+/server/mhotas-server
+/server/spike-simconnect
+/tools/udp-fake-phone/udp-fake-phone
+/tools/udp-fake-phone/udpfakephone
+*.exe
+*.test
+
+# Flutter / Dart
+app/.dart_tool/
+app/.flutter-plugins
+app/.flutter-plugins-dependencies
+app/.packages
+app/build/
+app/android/.gradle/
+app/android/build/
+app/android/app/build/
+app/android/local.properties
+app/ios/Flutter/Flutter.framework
+app/ios/Flutter/Flutter.podspec
+app/ios/Pods/
+app/**/GeneratedPluginRegistrant.*
+app/pubspec.lock
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+
+# Internal tracking doc, not part of the public repo
+docs/milestones.md

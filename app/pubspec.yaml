@@ -1,0 +1,26 @@
+name: mhotas
+description: >
+  mHOTAS — turn your phone into a virtual flight control for Microsoft
+  Flight Simulator 2024, with live SimConnect telemetry mirrored back to
+  the screen.
+publish_to: "none"
+version: 0.1.0
+
+environment:
+  sdk: ">=3.4.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_riverpod: ^2.5.1
+  flutter_rotation_sensor: ^0.3.1
+  shared_preferences: ^2.2.3
+  wakelock_plus: ^1.2.5
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
