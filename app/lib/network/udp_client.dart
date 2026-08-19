@@ -26,19 +26,34 @@ class UdpClient {
 
   final _statusController = StreamController<ConnectionStatus>.broadcast();
   final _telemetryController = StreamController<proto.Telemetry>.broadcast();
+  ConnectionStatus _lastStatus = ConnectionStatus.disconnected;
+
+  // The server sends HEARTBEAT/TELEMETRY at ~1Hz (docs/protocol.md), so
+  // silence past a few periods means the link is actually down (WiFi drop,
+  // backgrounding) rather than just a slow tick. Checked once a second;
+  // while down, the same tick resends HELLO so the app reconnects on its
+  // own once the link returns instead of requiring a manual reconnect.
+  Timer? _livenessTimer;
+  DateTime _lastRxAt = DateTime.fromMillisecondsSinceEpoch(0);
+  static const _livenessTimeout = Duration(seconds: 3);
 
   Stream<ConnectionStatus> get status => _statusController.stream;
   Stream<proto.Telemetry> get telemetry => _telemetryController.stream;
+
+  void _setStatus(ConnectionStatus s) {
+    _lastStatus = s;
+    _statusController.add(s);
+  }
 
   /// Binds a local socket (if not already bound) and sends HELLO to
   /// host:port. Connection isn't confirmed until a HELLO_ACK arrives on
   /// [status].
   Future<void> connect(String host, int port) async {
-    _statusController.add(ConnectionStatus.connecting);
+    _setStatus(ConnectionStatus.connecting);
     try {
       _serverAddress = InternetAddress(host);
     } on FormatException {
-      _statusController.add(ConnectionStatus.error);
+      _setStatus(ConnectionStatus.error);
       return;
     }
     _serverPort = port;
@@ -52,6 +67,19 @@ class UdpClient {
       _socket!.listen(_onSocketEvent);
     }
 
+    _lastRxAt = DateTime.now();
+    _livenessTimer?.cancel();
+    _livenessTimer =
+        Timer.periodic(const Duration(seconds: 1), (_) => _checkLiveness());
+
+    _send(proto.encodeHello(_nextSeq(), proto.Hello(deviceName: deviceName)));
+  }
+
+  void _checkLiveness() {
+    if (DateTime.now().difference(_lastRxAt) <= _livenessTimeout) return;
+    if (_lastStatus == ConnectionStatus.connected) {
+      _setStatus(ConnectionStatus.disconnected);
+    }
     _send(proto.encodeHello(_nextSeq(), proto.Hello(deviceName: deviceName)));
   }
 
@@ -59,6 +87,7 @@ class UdpClient {
     if (event != RawSocketEvent.read) return;
     final datagram = _socket?.receive();
     if (datagram == null) return;
+    _lastRxAt = DateTime.now();
     _handlePacket(datagram.data);
   }
 
@@ -86,11 +115,9 @@ class UdpClient {
     switch (header.type) {
       case proto.PacketType.helloAck:
         final ack = proto.decodeHelloAck(data);
-        _statusController.add(
-          ack.status == proto.HelloAckStatus.ok
-              ? ConnectionStatus.connected
-              : ConnectionStatus.versionMismatch,
-        );
+        _setStatus(ack.status == proto.HelloAckStatus.ok
+            ? ConnectionStatus.connected
+            : ConnectionStatus.versionMismatch);
       case proto.PacketType.heartbeat:
         // Liveness only; no action needed beyond having received something.
         break;
@@ -127,9 +154,10 @@ class UdpClient {
   }
 
   void disconnect() {
+    _livenessTimer?.cancel();
     _socket?.close();
     _socket = null;
-    _statusController.add(ConnectionStatus.disconnected);
+    _setStatus(ConnectionStatus.disconnected);
   }
 
   void dispose() {
