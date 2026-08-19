@@ -1,14 +1,10 @@
-.PHONY: start server fake-phone
+.PHONY: server fake-phone
 
-# Cross-compiles the SimConnect spike (Windows-only, needs SimConnect.dll)
+# Cross-compiles the real mhotas-server against the real SimConnect backend
 # and runs it via WSL2's interop, which executes .exe files as real Windows
 # processes with real DLL access — no need to switch to a Windows shell.
-start:
-	cd server/cmd/spike-simconnect && GOOS=windows GOARCH=amd64 go build -o spike-simconnect.exe . && ./spike-simconnect.exe
-
-# Same idea, but the real mhotas-server against the real SimConnect
-# backend. Pair with `make fake-phone` in another terminal to exercise it
-# without a phone.
+# Pair with `make fake-phone` in another terminal to exercise it without a
+# phone.
 server:
 	cd server/cmd/mhotas-server && GOOS=windows GOARCH=amd64 go build -o mhotas-server.exe . && ./mhotas-server.exe --backend=simconnect --config=../../config.json
 

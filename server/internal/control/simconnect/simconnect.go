@@ -2,7 +2,7 @@
 
 // Package simconnect implements control.Output by driving MSFS2024
 // through SimConnect, via server/internal/simlink. Validated against a
-// live MSFS2024 session (see server/cmd/spike-simconnect).
+// live MSFS2024 session.
 package simconnect
 
 import (
