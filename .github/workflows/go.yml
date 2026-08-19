@@ -1,0 +1,59 @@
+name: Go
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  server:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+      - working-directory: server
+        run: |
+          gofmt -l . | tee /tmp/gofmt.out
+          test ! -s /tmp/gofmt.out
+      - working-directory: server
+        run: go vet ./...
+      - working-directory: server
+        run: go test ./...
+      - working-directory: server
+        run: go build ./...
+
+  # internal/control/simconnect, internal/control/vjoy, internal/telemetry's real
+  # source, and internal/simlink carry //go:build windows — cross-compile them here
+  # since the job above silently skips them on Linux.
+  server-windows:
+    runs-on: ubuntu-latest
+    env:
+      GOOS: windows
+      GOARCH: amd64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+      - working-directory: server
+        run: go vet ./...
+      - working-directory: server
+        run: go build ./...
+
+  fake-phone:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: tools/udp-fake-phone/go.mod
+      - working-directory: tools/udp-fake-phone
+        run: |
+          gofmt -l . | tee /tmp/gofmt.out
+          test ! -s /tmp/gofmt.out
+      - working-directory: tools/udp-fake-phone
+        run: go vet ./...
+      - working-directory: tools/udp-fake-phone
+        run: go build ./...

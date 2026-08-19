@@ -25,6 +25,7 @@ class SliderAxisNotifier extends StateNotifier<SliderAxisState> {
   void setRudder(double value) => state = state.copyWith(rudder: value);
 }
 
-final sliderAxisProvider = StateNotifierProvider<SliderAxisNotifier, SliderAxisState>(
+final sliderAxisProvider =
+    StateNotifierProvider<SliderAxisNotifier, SliderAxisState>(
   (ref) => SliderAxisNotifier(),
 );

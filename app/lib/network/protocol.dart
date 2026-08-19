@@ -123,7 +123,8 @@ class Button {
   final bool pressed;
   final int eventId;
 
-  const Button({required this.buttonId, required this.pressed, required this.eventId});
+  const Button(
+      {required this.buttonId, required this.pressed, required this.eventId});
 }
 
 Uint8List encodeButton(int seq, Button btn) {
@@ -196,7 +197,8 @@ HelloAck decodeHelloAck(Uint8List b) {
 
 const int heartbeatPacketSize = headerSize;
 
-Uint8List encodeHeartbeat(int seq) => _newPacket(PacketType.heartbeat, seq, heartbeatPacketSize);
+Uint8List encodeHeartbeat(int seq) =>
+    _newPacket(PacketType.heartbeat, seq, heartbeatPacketSize);
 
 // ---- TELEMETRY (0x06) ----
 

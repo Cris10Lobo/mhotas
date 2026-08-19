@@ -71,14 +71,12 @@ firing (pitch/roll/rudder snap to neutral, throttle holds) a few hundred ms afte
 
 ### App (`app/`)
 
-No Flutter SDK is available in some dev environments this repo is worked in — `app/lib/` and
-`pubspec.yaml` may be ahead of what's been run through `flutter analyze`; don't assume the Dart code
-compiles without checking. To get a working project from scratch:
+`android/` and `ios/` are generated (via `flutter create`) and committed, so a fresh clone builds as-is —
+no regeneration step needed. Some dev environments this repo is worked in still lack a Flutter SDK though,
+so don't assume the Dart code compiles without checking (CI runs `flutter analyze` on every push).
 
 ```sh
 cd app
-flutter create --org <your.org> --project-name mhotas .   # generates android/, ios/
-git checkout -- pubspec.yaml lib/                          # flutter create overwrites both
 flutter pub get
 flutter analyze
 flutter run   # real device required — motion sensors aren't meaningful on emulators/simulators

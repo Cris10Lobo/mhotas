@@ -20,7 +20,8 @@ class Attitude {
 /// Dart). Validated live on a real Android device; motion sensors aren't
 /// meaningful on emulators/simulators so this can't be exercised there.
 class AttitudeStream {
-  AttitudeStream({double maxTiltRadians = math.pi / 4}) : _maxTiltRadians = maxTiltRadians;
+  AttitudeStream({double maxTiltRadians = math.pi / 4})
+      : _maxTiltRadians = maxTiltRadians;
 
   /// Radians of physical tilt that map to full ±1 deflection. Default ±45°.
   final double _maxTiltRadians;

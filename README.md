@@ -1,5 +1,8 @@
 # mHOTAS — Virtual Mobile HOTAS for MSFS2024
 
+[![Go](https://github.com/Cris10Lobo/mhotas/actions/workflows/go.yml/badge.svg)](https://github.com/Cris10Lobo/mhotas/actions/workflows/go.yml)
+[![Flutter](https://github.com/Cris10Lobo/mhotas/actions/workflows/flutter.yml/badge.svg)](https://github.com/Cris10Lobo/mhotas/actions/workflows/flutter.yml)
+
 Turn a smartphone into a virtual flight control for Microsoft Flight Simulator 2024: tilt the phone
 like a stick for pitch/roll, use on-screen sliders for throttle/rudder, and see live aircraft state
 (flap position, gear position) mirrored back to the screen in real time.
@@ -52,16 +55,8 @@ go run . --target=127.0.0.1:9750
 
 ### App
 
-`app/lib/` and `app/pubspec.yaml` were hand-written without a Flutter SDK available in the environment
-they were authored in, so `android/`/`ios/` platform projects don't exist yet and none of this has been
-through `flutter analyze`. To get a working project:
-
 ```sh
-# From a machine with the Flutter SDK installed:
 cd app
-flutter create --org <your.org> --project-name mhotas .   # generates android/, ios/, and a starter pubspec.yaml
-# then restore this repo's pubspec.yaml and lib/ (flutter create will have overwritten them)
-git checkout -- pubspec.yaml lib/
 flutter pub get
 flutter analyze
 flutter run   # on a real device — motion sensors aren't meaningful on emulators/simulators
