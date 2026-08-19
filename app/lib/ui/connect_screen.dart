@@ -79,7 +79,8 @@ class _ConnectScreenState extends ConsumerState<ConnectScreen> {
         if (!mounted) return;
         setState(() {
           _connecting = false;
-          _error = 'Server protocol version mismatch — update the app or server';
+          _error =
+              'Server protocol version mismatch — update the app or server';
         });
       } else if (status == ConnectionStatus.error) {
         _closeStatusSub();

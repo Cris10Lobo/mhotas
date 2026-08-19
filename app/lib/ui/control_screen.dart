@@ -45,7 +45,8 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
     _attitudeSub = _attitudeStream.stream.listen((a) {
       if (mounted) setState(() => _attitude = a);
     });
-    _sendTimer = Timer.periodic(const Duration(milliseconds: 33), (_) => _sendAxis()); // ~30Hz
+    _sendTimer = Timer.periodic(
+        const Duration(milliseconds: 33), (_) => _sendAxis()); // ~30Hz
   }
 
   void _sendAxis() {
@@ -123,26 +124,36 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
                 Expanded(
                   child: Row(
                     children: [
-                      Expanded(child: Center(child: _TiltIndicator(attitude: _attitude))),
+                      Expanded(
+                          child: Center(
+                              child: _TiltIndicator(attitude: _attitude))),
                       _ThrottleLever(
-                        onChanged: (v) => ref.read(sliderAxisProvider.notifier).setThrottle(v),
+                        onChanged: (v) => ref
+                            .read(sliderAxisProvider.notifier)
+                            .setThrottle(v),
                         synced: telemetry?.throttlePercent,
                       ),
                     ],
                   ),
                 ),
                 Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                     children: [
-                      _BigButton(label: 'GEAR', onTap: () => _tapButton(ButtonIds.gear)),
+                      _BigButton(
+                          label: 'GEAR',
+                          onTap: () => _tapButton(ButtonIds.gear)),
                       _BigButton(
                         label: 'BRAKE',
                         onTap: () => _tapButton(ButtonIds.parkingBrake),
                         active: telemetry?.parkingBrakeSet ?? false,
                       ),
-                      _BigButton(label: 'PAUSE', onTap: _togglePause, active: isPaused),
+                      _BigButton(
+                          label: 'PAUSE',
+                          onTap: _togglePause,
+                          active: isPaused),
                     ],
                   ),
                 ),
@@ -152,7 +163,8 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
               left: 16,
               bottom: 16,
               child: _RudderStick(
-                onChanged: (v) => ref.read(sliderAxisProvider.notifier).setRudder(v),
+                onChanged: (v) =>
+                    ref.read(sliderAxisProvider.notifier).setRudder(v),
               ),
             ),
           ],
@@ -209,7 +221,9 @@ class _TelemetryRow extends StatelessWidget {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
         children: [
-          Text(t == null ? 'FLAP --/--' : 'FLAP ${t.flapHandleIndex}/${t.flapHandleIndexMax}'),
+          Text(t == null
+              ? 'FLAP --/--'
+              : 'FLAP ${t.flapHandleIndex}/${t.flapHandleIndexMax}'),
           Text(_gearLabel),
         ],
       ),
@@ -241,7 +255,8 @@ class _TiltIndicator extends StatelessWidget {
         child: Container(
           width: 20,
           height: 20,
-          decoration: const BoxDecoration(color: Colors.blue, shape: BoxShape.circle),
+          decoration:
+              const BoxDecoration(color: Colors.blue, shape: BoxShape.circle),
         ),
       ),
     );
@@ -270,7 +285,8 @@ class _ThrottleLever extends StatefulWidget {
   State<_ThrottleLever> createState() => _ThrottleLeverState();
 }
 
-class _ThrottleLeverState extends State<_ThrottleLever> with SingleTickerProviderStateMixin {
+class _ThrottleLeverState extends State<_ThrottleLever>
+    with SingleTickerProviderStateMixin {
   static const _height = 220.0;
   static const _knobHeight = 40.0;
 
@@ -305,7 +321,8 @@ class _ThrottleLeverState extends State<_ThrottleLever> with SingleTickerProvide
     super.initState();
     _anim = AnimationController(vsync: this)
       ..addListener(() {
-        setState(() => _value = _animFrom + (_animTo - _animFrom) * _anim.value);
+        setState(
+            () => _value = _animFrom + (_animTo - _animFrom) * _anim.value);
         if (_animNotifies) _notifyChanged();
       });
   }
@@ -315,7 +332,8 @@ class _ThrottleLeverState extends State<_ThrottleLever> with SingleTickerProvide
     widget.onChanged(_value);
   }
 
-  void _animateTo(double target, {required bool notify, required Duration duration}) {
+  void _animateTo(double target,
+      {required bool notify, required Duration duration}) {
     _animFrom = _value;
     _animTo = target;
     _animNotifies = notify;
@@ -327,15 +345,20 @@ class _ThrottleLeverState extends State<_ThrottleLever> with SingleTickerProvide
   void didUpdateWidget(covariant _ThrottleLever oldWidget) {
     super.didUpdateWidget(oldWidget);
     final synced = widget.synced;
-    final recentlyCommanded = DateTime.now().difference(_lastLocalCommandAt) < _localCommandGrace;
+    final recentlyCommanded =
+        DateTime.now().difference(_lastLocalCommandAt) < _localCommandGrace;
     // Ease toward a new synced reading instead of snapping instantly —
     // telemetry only arrives ~1x/sec, so an instant jump reads as a visible
     // stutter; animating over most of that interval reads as smooth
     // tracking instead. Compares against _animTo (the in-flight target),
     // not _value, so repeated rebuilds with the same synced reading don't
     // keep restarting the animation from scratch.
-    if (!_dragging && !recentlyCommanded && synced != null && synced != _animTo) {
-      _animateTo(synced, notify: false, duration: const Duration(milliseconds: 700));
+    if (!_dragging &&
+        !recentlyCommanded &&
+        synced != null &&
+        synced != _animTo) {
+      _animateTo(synced,
+          notify: false, duration: const Duration(milliseconds: 700));
     }
   }
 
@@ -387,11 +410,13 @@ class _ThrottleLeverState extends State<_ThrottleLever> with SingleTickerProvide
         child: Stack(
           alignment: Alignment.center,
           children: [
-            const Positioned(top: 6, child: Text('THR', style: TextStyle(fontSize: 11))),
+            const Positioned(
+                top: 6, child: Text('THR', style: TextStyle(fontSize: 11))),
             // Idle-line marker: reverse zone is below this.
             Container(height: 1, color: scheme.outline),
             Align(
-              alignment: Alignment(0, -_value), // y: -1 = top (full fwd), 1 = bottom (full rev)
+              alignment: Alignment(
+                  0, -_value), // y: -1 = top (full fwd), 1 = bottom (full rev)
               child: Container(
                 width: 52,
                 height: _knobHeight,
@@ -421,7 +446,8 @@ class _RudderStick extends StatefulWidget {
   State<_RudderStick> createState() => _RudderStickState();
 }
 
-class _RudderStickState extends State<_RudderStick> with SingleTickerProviderStateMixin {
+class _RudderStickState extends State<_RudderStick>
+    with SingleTickerProviderStateMixin {
   static const _width = 160.0;
   static const _knobWidth = 44.0;
 
@@ -432,7 +458,8 @@ class _RudderStickState extends State<_RudderStick> with SingleTickerProviderSta
   @override
   void initState() {
     super.initState();
-    _springBack = AnimationController(vsync: this, duration: const Duration(milliseconds: 150))
+    _springBack = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 150))
       ..addListener(() {
         setState(() => _value = _springBackFrom * (1 - _springBack.value));
         widget.onChanged(_value);
@@ -481,7 +508,9 @@ class _RudderStickState extends State<_RudderStick> with SingleTickerProviderSta
                 width: _knobWidth,
                 height: 48,
                 margin: const EdgeInsets.all(4),
-                decoration: BoxDecoration(color: scheme.primary, borderRadius: BorderRadius.circular(8)),
+                decoration: BoxDecoration(
+                    color: scheme.primary,
+                    borderRadius: BorderRadius.circular(8)),
               ),
             ),
           ],
@@ -497,7 +526,8 @@ class _RudderStickState extends State<_RudderStick> with SingleTickerProviderSta
 /// keyboard shortcuts) shows up correctly instead of the button lying
 /// about what's really engaged.
 class _BigButton extends StatelessWidget {
-  const _BigButton({required this.label, required this.onTap, this.active = false});
+  const _BigButton(
+      {required this.label, required this.onTap, this.active = false});
 
   final String label;
   final VoidCallback onTap;
