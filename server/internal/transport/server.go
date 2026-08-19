@@ -1,7 +1,7 @@
 // Package transport owns the UDP socket: it turns incoming phone packets
 // into calibrated control.Output calls, tracks the connected phone's
 // address for pushing TELEMETRY/HEARTBEAT back, and runs the failsafe
-// timer described in docs/protocol.md.
+// timer.
 //
 // MVP supports a single active phone connection at a time, matching how
 // the closest prior art (Fly-By-Wireless) operates.
@@ -39,7 +39,6 @@ type Server struct {
 	outSeq          uint16
 }
 
-// New binds a UDP socket on cfg.ListenPort and returns a Server driving backend.
 func New(cfg config.Config, backend control.Output, log *slog.Logger) (*Server, error) {
 	// "udp4", not "udp": phones connect via manual IPv4 entry, and an
 	// unspecified bind on Windows can land on the IPv6 wildcard, which
@@ -58,13 +57,10 @@ func New(cfg config.Config, backend control.Output, log *slog.Logger) (*Server, 
 	}, nil
 }
 
-// Addr returns the UDP address the server is listening on.
 func (s *Server) Addr() *net.UDPAddr {
 	return s.conn.LocalAddr().(*net.UDPAddr)
 }
 
-// Run reads packets and drives the failsafe/heartbeat timers until ctx is
-// canceled, then closes the socket.
 func (s *Server) Run(ctx context.Context) error {
 	go s.failsafeLoop(ctx)
 	go s.heartbeatLoop(ctx)
@@ -197,7 +193,6 @@ func (s *Server) applyAxis(id control.AxisID, raw float64, ac config.AxisConfig)
 		// (dragging the throttle with a mouse, autothrottle, etc.) within
 		// one packet interval. Pitch/roll are unaffected in practice —
 		// sensor noise means they essentially never repeat bit-for-bit.
-		// See docs/protocol.md's "Bidirectional axis sync".
 		return
 	}
 	if err := s.backend.SetAxis(id, shaped); err != nil {

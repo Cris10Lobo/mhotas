@@ -44,8 +44,8 @@ type Output interface {
 	// Name identifies the backend for logging, e.g. "simconnect", "vjoy", "log".
 	Name() string
 
-	// SetAxis applies a shaped axis value. Range is -1..1 for
-	// pitch/roll/rudder and 0..1 for throttle.
+	// SetAxis applies a shaped axis value, -1..1 (throttle's negative range
+	// is reverse thrust).
 	SetAxis(axis AxisID, value float64) error
 
 	// SetButton applies a discrete button state change.

@@ -65,7 +65,6 @@ type aircraftStateData struct {
 	ParkingBrakeSet        int32
 }
 
-// AircraftState is live aircraft state read back from SimConnect.
 type AircraftState struct {
 	FlapHandleIndex        int32
 	FlapNumHandlePositions int32
@@ -80,8 +79,7 @@ type AircraftState struct {
 	// -100..100 (negative = reverse) — the throttle lever's actual current
 	// position in the sim, independent of what control/simconnect last
 	// commanded. Feeds telemetry.Source so the phone can mirror manual
-	// in-sim throttle changes instead of fighting them — see
-	// docs/protocol.md's "Bidirectional axis sync". Not yet confirmed
+	// in-sim throttle changes instead of fighting them. Not yet confirmed
 	// against a live sim.
 	ThrottleLeverPercent int32
 	// ParkingBrakeSet is BRAKE PARKING POSITION, 0 or 1 — same
@@ -144,7 +142,7 @@ func Connect(ctx context.Context, log *slog.Logger) *Client {
 
 	// SimConnect's own Pause system event, auto-subscribed by the manager
 	// on connect — ground truth for Client.Paused(), not a locally-tracked
-	// guess of whether our last PAUSE_TOGGLE tap should have flipped it.
+	// guess of whether our last SetPause call should have flipped it.
 	_ = c.mgr.OnPause(func(paused bool) { c.paused.Store(paused) })
 
 	go func() {
@@ -306,7 +304,6 @@ func (c *Client) SetPause(paused bool) error {
 	return c.transmit(eventPauseSet, data)
 }
 
-// Close stops the SimConnect manager.
 func (c *Client) Close() error {
 	return c.mgr.Stop()
 }

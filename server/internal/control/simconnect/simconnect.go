@@ -24,7 +24,6 @@ const (
 	buttonPause        control.ButtonID = 3
 )
 
-// Backend drives MSFS2024 via SimConnect.
 type Backend struct {
 	client *simlink.Client
 	log    *slog.Logger

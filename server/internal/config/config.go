@@ -12,8 +12,7 @@ import (
 )
 
 // FailsafeAction describes what a given axis should do when the server
-// stops receiving AXIS packets past the failsafe timeout. See
-// docs/protocol.md for the reasoning behind the defaults.
+// stops receiving AXIS packets past the failsafe timeout.
 type FailsafeAction string
 
 const (
@@ -46,7 +45,8 @@ type Config struct {
 
 // Default returns the MVP default configuration: port 9750, 500ms failsafe
 // timeout, no dead-zone/expo shaping. Pitch/roll/rudder snap to neutral and
-// throttle holds its last value on failsafe, per docs/protocol.md.
+// throttle holds its last value on failsafe — an unexpected throttle cut
+// is a worse mid-flight surprise than a stale hold.
 func Default() Config {
 	return Config{
 		ListenPort:        9750,

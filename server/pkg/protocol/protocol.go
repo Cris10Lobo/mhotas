@@ -46,7 +46,6 @@ func (t PacketType) String() string {
 	}
 }
 
-// HeaderSize is the size in bytes of the header present on every packet.
 const HeaderSize = 4
 
 // NameFieldSize is the width in bytes of the fixed device/server name field
@@ -54,14 +53,12 @@ const HeaderSize = 4
 // the last byte is always left 0 to guarantee a NUL terminator.
 const NameFieldSize = 32
 
-// Header is present on every packet.
 type Header struct {
 	Type    PacketType
 	Version uint8
 	Seq     uint16
 }
 
-// DecodeHeader reads the 4-byte header from the start of b.
 func DecodeHeader(b []byte) (Header, error) {
 	if len(b) < HeaderSize {
 		return Header{}, fmt.Errorf("protocol: packet too short for header: %d bytes", len(b))
@@ -104,7 +101,6 @@ func decodeName(src []byte) string {
 
 // ---- AXIS (0x01) ----
 
-// AxisPacketSize is the total size in bytes of an encoded AXIS packet.
 const AxisPacketSize = HeaderSize + 16
 
 // Axis carries continuous stick/throttle/rudder position. The phone applies
@@ -118,7 +114,6 @@ type Axis struct {
 	Rudder   float32 // -1..1
 }
 
-// EncodeAxis returns a new AXIS packet.
 func EncodeAxis(seq uint16, a Axis) []byte {
 	buf := make([]byte, AxisPacketSize)
 	encodeHeader(buf, TypeAxis, seq)
@@ -129,7 +124,6 @@ func EncodeAxis(seq uint16, a Axis) []byte {
 	return buf
 }
 
-// DecodeAxis parses an AXIS packet's payload. b must include the header.
 func DecodeAxis(b []byte) (Axis, error) {
 	if len(b) < AxisPacketSize {
 		return Axis{}, fmt.Errorf("protocol: AXIS packet too short: %d bytes", len(b))
@@ -144,19 +138,17 @@ func DecodeAxis(b []byte) (Axis, error) {
 
 // ---- BUTTON (0x02) ----
 
-// ButtonPacketSize is the total size in bytes of an encoded BUTTON packet.
 const ButtonPacketSize = HeaderSize + 4
 
 // Button carries a single discrete button press/release event. The app sends
 // each event 3x in quick succession so a dropped UDP packet doesn't lose it;
-// EventID lets the receiver de-dupe (see transport.ButtonDeduper).
+// EventID lets the receiver de-dupe.
 type Button struct {
 	ButtonID uint8
 	Pressed  bool
 	EventID  uint16
 }
 
-// EncodeButton returns a new BUTTON packet.
 func EncodeButton(seq uint16, btn Button) []byte {
 	buf := make([]byte, ButtonPacketSize)
 	encodeHeader(buf, TypeButton, seq)
@@ -168,7 +160,6 @@ func EncodeButton(seq uint16, btn Button) []byte {
 	return buf
 }
 
-// DecodeButton parses a BUTTON packet's payload. b must include the header.
 func DecodeButton(b []byte) (Button, error) {
 	if len(b) < ButtonPacketSize {
 		return Button{}, fmt.Errorf("protocol: BUTTON packet too short: %d bytes", len(b))
@@ -182,7 +173,6 @@ func DecodeButton(b []byte) (Button, error) {
 
 // ---- HELLO (0x03) / HELLO_ACK (0x04) ----
 
-// HelloPacketSize is the total size in bytes of an encoded HELLO packet.
 const HelloPacketSize = HeaderSize + NameFieldSize
 
 // Hello is sent once by the phone when the user taps "Connect."
@@ -190,7 +180,6 @@ type Hello struct {
 	DeviceName string
 }
 
-// EncodeHello returns a new HELLO packet.
 func EncodeHello(seq uint16, h Hello) []byte {
 	buf := make([]byte, HelloPacketSize)
 	encodeHeader(buf, TypeHello, seq)
@@ -198,7 +187,6 @@ func EncodeHello(seq uint16, h Hello) []byte {
 	return buf
 }
 
-// DecodeHello parses a HELLO packet's payload. b must include the header.
 func DecodeHello(b []byte) (Hello, error) {
 	if len(b) < HelloPacketSize {
 		return Hello{}, fmt.Errorf("protocol: HELLO packet too short: %d bytes", len(b))
@@ -214,7 +202,6 @@ const (
 	HelloVersionMismatch HelloAckStatus = 1
 )
 
-// HelloAckPacketSize is the total size in bytes of an encoded HELLO_ACK packet.
 const HelloAckPacketSize = HeaderSize + 1 + NameFieldSize
 
 // HelloAck is the server's reply to HELLO. On a version mismatch the server
@@ -225,7 +212,6 @@ type HelloAck struct {
 	ServerName string
 }
 
-// EncodeHelloAck returns a new HELLO_ACK packet.
 func EncodeHelloAck(seq uint16, h HelloAck) []byte {
 	buf := make([]byte, HelloAckPacketSize)
 	encodeHeader(buf, TypeHelloAck, seq)
@@ -234,7 +220,6 @@ func EncodeHelloAck(seq uint16, h HelloAck) []byte {
 	return buf
 }
 
-// DecodeHelloAck parses a HELLO_ACK packet's payload. b must include the header.
 func DecodeHelloAck(b []byte) (HelloAck, error) {
 	if len(b) < HelloAckPacketSize {
 		return HelloAck{}, fmt.Errorf("protocol: HELLO_ACK packet too short: %d bytes", len(b))
@@ -247,11 +232,10 @@ func DecodeHelloAck(b []byte) (HelloAck, error) {
 
 // ---- HEARTBEAT (0x05) ----
 
-// HeartbeatPacketSize is the total size in bytes of an encoded HEARTBEAT packet.
 const HeartbeatPacketSize = HeaderSize
 
-// EncodeHeartbeat returns a new HEARTBEAT packet. It carries no payload
-// beyond the header; liveness is inferred from receipt alone.
+// EncodeHeartbeat returns a HEARTBEAT packet — no payload beyond the
+// header; liveness is inferred from receipt alone.
 func EncodeHeartbeat(seq uint16) []byte {
 	buf := make([]byte, HeartbeatPacketSize)
 	encodeHeader(buf, TypeHeartbeat, seq)
@@ -269,18 +253,16 @@ const (
 	GearTransit GearPosition = 2
 )
 
-// TelemetryPacketSize is the total size in bytes of an encoded TELEMETRY packet.
 const TelemetryPacketSize = HeaderSize + 10
 
 // Telemetry carries live aircraft state read from SimConnect, pushed
 // server → phone. v1 intentionally ships a fixed small struct rather than a
-// generic key/value simvar schema; see docs/protocol.md.
+// generic key/value simvar schema.
 //
 // Every field here exists to close a "double lane" gap for something the
 // phone can also command: an in-sim change (mouse, keyboard, autothrottle,
 // another control) should show up on the phone instead of the phone
-// silently holding a stale value or guessing state locally — see
-// docs/protocol.md's "Bidirectional axis sync".
+// silently holding a stale value or guessing state locally.
 type Telemetry struct {
 	FlapHandleIndex    int8
 	FlapHandleIndexMax int8
@@ -298,7 +280,6 @@ type Telemetry struct {
 	Paused bool
 }
 
-// EncodeTelemetry returns a new TELEMETRY packet.
 func EncodeTelemetry(seq uint16, t Telemetry) []byte {
 	buf := make([]byte, TelemetryPacketSize)
 	encodeHeader(buf, TypeTelemetry, seq)
@@ -312,7 +293,6 @@ func EncodeTelemetry(seq uint16, t Telemetry) []byte {
 	return buf
 }
 
-// DecodeTelemetry parses a TELEMETRY packet's payload. b must include the header.
 func DecodeTelemetry(b []byte) (Telemetry, error) {
 	if len(b) < TelemetryPacketSize {
 		return Telemetry{}, fmt.Errorf("protocol: TELEMETRY packet too short: %d bytes", len(b))

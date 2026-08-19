@@ -4,11 +4,10 @@ import 'dart:math' as math;
 import 'package:flutter_rotation_sensor/flutter_rotation_sensor.dart';
 
 /// Normalized phone attitude: pitch/roll in -1..1, matching the AXIS
-/// packet's range (docs/protocol.md). No dead-zone/curve shaping happens
-/// here — that's server-side — but the recenter/zero offset does, since
-/// it's correcting for however the user is currently gripping the phone,
-/// not for how the simulator should respond. See the project plan for
-/// that split.
+/// packet's range. No dead-zone/curve shaping happens here — that's
+/// server-side — but the recenter/zero offset does, since it's correcting
+/// for however the user is currently gripping the phone, not for how the
+/// simulator should respond.
 class Attitude {
   final double pitch;
   final double roll;
@@ -23,8 +22,7 @@ class Attitude {
 class AttitudeStream {
   AttitudeStream({double maxTiltRadians = math.pi / 4}) : _maxTiltRadians = maxTiltRadians;
 
-  /// Radians of physical tilt that map to full ±1 deflection. Default
-  /// ±45°, per the project plan's max-tilt-angle convention.
+  /// Radians of physical tilt that map to full ±1 deflection. Default ±45°.
   final double _maxTiltRadians;
 
   double _pitchOffset = 0;

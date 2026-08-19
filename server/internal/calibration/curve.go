@@ -1,9 +1,8 @@
 // Package calibration shapes raw normalized axis values into what the
 // simulator should actually see: dead-zone, response curve, and inversion.
-// This lives server-side, not phone-side — see docs/protocol.md and the
-// project plan for why (it's about how the *simulator* responds, not about
-// correcting the phone's physical orientation, which is the phone's job via
-// its own recenter gesture).
+// This lives server-side, not phone-side, because it's about how the
+// *simulator* responds, not about correcting the phone's physical
+// orientation — that's the phone's own recenter gesture's job.
 package calibration
 
 // Curve describes per-axis response shaping.
@@ -17,13 +16,12 @@ type Curve struct {
 	// at the extremes. 0 disables the curve (linear response).
 	Expo float64 `json:"expo"`
 
-	// Invert flips the sign of the output.
 	Invert bool `json:"invert"`
 }
 
 // Apply shapes a normalized input value (-1..1 for every axis, including
-// throttle, where negative is reverse thrust) according to the curve. Sign
-// is preserved through dead-zone and expo shaping; Invert is applied first.
+// throttle, where negative is reverse thrust). Sign is preserved through
+// dead-zone and expo shaping.
 func (c Curve) Apply(value float64) float64 {
 	v := value
 	if c.Invert {

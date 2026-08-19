@@ -17,11 +17,8 @@ import (
 
 var errNotImplemented = errors.New("vjoy backend is not implemented yet")
 
-// Backend is a not-yet-functional control.Output stub.
 type Backend struct{}
 
-// New returns a stub Backend. Every call currently returns
-// errNotImplemented; see the package doc comment.
 func New() (*Backend, error) {
 	return &Backend{}, nil
 }

@@ -250,7 +250,7 @@ func TestFailsafeNeutralizesAxisAfterTimeout(t *testing.T) {
 		throttle, _ := backend.lastAxis(control.AxisThrottle)
 		if pitch == 0 && throttle == 1 {
 			// pitch neutralized, throttle held at its last value — matches
-			// the default failsafe policy in docs/protocol.md.
+			// the default failsafe policy.
 			return
 		}
 		time.Sleep(20 * time.Millisecond)
