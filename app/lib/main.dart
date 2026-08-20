@@ -12,6 +12,9 @@ void main() {
     DeviceOrientation.landscapeLeft,
     DeviceOrientation.landscapeRight,
   ]);
+  // immersiveSticky over immersive: a stray edge swipe while gripping the
+  // phone shouldn't need a second swipe to dismiss the status/nav bars again.
+  SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
   runApp(const ProviderScope(child: MHotasApp()));
 }
 
