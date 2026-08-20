@@ -1,19 +1,22 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../state/settings.dart';
 
 import '../state/status_tiles.dart';
 
-/// MVP-minimal by design: curve/dead-zone editing stays server-config-file-
-/// only (server/internal/config) until a later remote-settings-sync
-/// feature. The one thing that is configurable here is which simvar each
-/// control-screen status tile shows.
-class SettingsScreen extends StatefulWidget {
+/// feature. Two things are configurable here: which simvar each
+/// control-screen status tile shows, and the manual joystick toggle (a
+/// choice about which on-screen control drives pitch/roll, not something
+/// the server needs to know about).
+class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
 
   @override
-  State<SettingsScreen> createState() => _SettingsScreenState();
+  ConsumerState<SettingsScreen> createState() => _SettingsScreenState();
 }
 
-class _SettingsScreenState extends State<SettingsScreen> {
+class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   List<StatusTileKind> _kinds = defaultStatusTileKinds;
 
   @override
@@ -38,6 +41,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final manualJoystick = ref.watch(manualJoystickProvider);
     return Scaffold(
       appBar: AppBar(title: const Text('Settings')),
       body: ListView(
@@ -73,6 +77,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ],
               ),
             ),
+          const SizedBox(height: 24),
+          SwitchListTile(
+            title: const Text('Manual joystick'),
+            subtitle: const Text(
+                'Use an on-screen joystick for pitch/roll instead of tilting the phone'),
+            value: manualJoystick,
+            onChanged: (v) =>
+                ref.read(manualJoystickProvider.notifier).setEnabled(v),
+          ),
           const SizedBox(height: 24),
           const Text(
             'Calibration (dead-zone, curve, invert) lives in the server\'s '
