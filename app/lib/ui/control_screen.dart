@@ -30,10 +30,13 @@ class ButtonIds {
   static const int spoilerArm = 9;
 }
 
-/// The primary flying screen, styled after X-Plane Mobile: tilt the phone
-/// for pitch/roll, use the on-screen sliders for throttle/rudder, glance
-/// at large buttons and the flap/gear telemetry readout — controls are
-/// sized for occasional glances, not sustained attention.
+/// The primary flying screen, laid out to match docs/mhotas-mobile.png:
+/// tilt the phone (or the optional on-screen joystick) for pitch/roll,
+/// levers/sticks for throttle/rudder/flaps/speedbrake, and each control
+/// carries its own state (flap lever shows its own position, gear/parking
+/// brake are toggles that light up from telemetry) rather than a separate
+/// plain-text status readout — controls are sized for occasional glances,
+/// not sustained attention.
 class ControlScreen extends ConsumerStatefulWidget {
   const ControlScreen({super.key});
 
@@ -177,6 +180,12 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
       appBar: AppBar(
         title: const Text('mHOTAS'),
         actions: [
+          IconButton(
+            icon: Icon(isPaused ? Icons.play_arrow : Icons.pause),
+            tooltip: 'Pause',
+            color: isPaused ? Theme.of(context).colorScheme.primary : null,
+            onPressed: _togglePause,
+          ),
           TextButton.icon(
             icon: const Icon(Icons.center_focus_strong),
             label: const Text('Calibrate'),
@@ -201,6 +210,11 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
             tooltip: 'Settings',
             onPressed: _openSettings,
           ),
+          Padding(
+            padding: const EdgeInsets.only(right: 12, left: 4),
+            child:
+                Center(child: _ConnectionStatusText(status: connectionStatus)),
+          ),
         ],
       ),
       body: SafeArea(
@@ -208,8 +222,6 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
           children: [
             Column(
               children: [
-                _ConnectionBanner(status: connectionStatus),
-                _TelemetryRow(telemetry: telemetry),
                 Align(
                   alignment: Alignment.centerLeft,
                   child: Padding(
@@ -276,6 +288,26 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
                           ),
                         ),
                       ),
+                      Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: _Movable(
+                          id: 'parkingBrake',
+                          child: _ParkingBrakeButton(
+                            active: telemetry?.parkingBrakeSet ?? false,
+                            onTap: () => _tapButton(ButtonIds.parkingBrake),
+                          ),
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: _Movable(
+                          id: 'gear',
+                          child: _GearToggle(
+                            position: telemetry?.gearPosition,
+                            onTap: () => _tapButton(ButtonIds.gear),
+                          ),
+                        ),
+                      ),
                       _Movable(
                         id: 'throttle',
                         child: _ThrottleLever(
@@ -285,27 +317,6 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
                           synced: telemetry?.throttlePercent,
                         ),
                       ),
-                    ],
-                  ),
-                ),
-                Padding(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                    children: [
-                      _BigButton(
-                          label: 'GEAR',
-                          onTap: () => _tapButton(ButtonIds.gear)),
-                      _BigButton(
-                        label: 'BRAKE',
-                        onTap: () => _tapButton(ButtonIds.parkingBrake),
-                        active: telemetry?.parkingBrakeSet ?? false,
-                      ),
-                      _BigButton(
-                          label: 'PAUSE',
-                          onTap: _togglePause,
-                          active: isPaused),
                     ],
                   ),
                 ),
@@ -383,8 +394,11 @@ class _Movable extends ConsumerWidget {
   }
 }
 
-class _ConnectionBanner extends StatelessWidget {
-  const _ConnectionBanner({required this.status});
+/// Top-right corner status text, per the wireframe (distinct from the AppBar
+/// title, which stays plain "mHOTAS" — the wireframe repeats the name here
+/// alongside the color-coded state on purpose, not a duplication mistake).
+class _ConnectionStatusText extends StatelessWidget {
+  const _ConnectionStatusText({required this.status});
 
   final ConnectionStatus? status;
 
@@ -398,48 +412,97 @@ class _ConnectionBanner extends StatelessWidget {
       ConnectionStatus.connecting => ('Connecting', Colors.orange),
       _ => ('Disconnected', Colors.red),
     };
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Text(
-        'mHOTAS · $label',
-        textAlign: TextAlign.center,
-        style: TextStyle(color: color, fontWeight: FontWeight.bold),
+    return Text(
+      'mHOTAS - $label',
+      style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 12),
+    );
+  }
+}
+
+/// Compact UP/DOWN toggle switch for the landing gear, per the wireframe —
+/// replaces a plain "GEAR" button + separate "GEAR UP/DOWN/TRANSIT" text
+/// readout with one widget that's both the control and its own indicator.
+class _GearToggle extends StatelessWidget {
+  const _GearToggle({required this.position, required this.onTap});
+
+  final int? position;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final down = position == proto.GearPosition.down;
+    final transit = position == proto.GearPosition.transit;
+    final thumbAlign = down
+        ? Alignment.bottomCenter
+        : (transit ? Alignment.center : Alignment.topCenter);
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 40,
+        height: 88,
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        decoration: BoxDecoration(
+          color: scheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Column(
+          children: [
+            Text('UP',
+                style: TextStyle(
+                    fontSize: 9,
+                    fontWeight: !down && !transit
+                        ? FontWeight.bold
+                        : FontWeight.normal)),
+            Expanded(
+              child: AnimatedAlign(
+                duration: const Duration(milliseconds: 200),
+                alignment: thumbAlign,
+                child: Container(
+                  width: 28,
+                  height: 28,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: transit ? scheme.tertiary : scheme.primary,
+                  ),
+                ),
+              ),
+            ),
+            Text('DOWN',
+                style: TextStyle(
+                    fontSize: 9,
+                    fontWeight: down ? FontWeight.bold : FontWeight.normal)),
+          ],
+        ),
       ),
     );
   }
 }
 
-class _TelemetryRow extends StatelessWidget {
-  const _TelemetryRow({required this.telemetry});
+/// Parking brake, styled as the wireframe's "Parking break icon" circle —
+/// same circular treatment as _ToeBrake, but a tap-toggle (parking brake
+/// holds until tapped again) rather than a hold-while-pressed control.
+class _ParkingBrakeButton extends StatelessWidget {
+  const _ParkingBrakeButton({required this.active, required this.onTap});
 
-  final proto.Telemetry? telemetry;
-
-  String get _gearLabel {
-    switch (telemetry?.gearPosition) {
-      case proto.GearPosition.down:
-        return 'GEAR DOWN';
-      case proto.GearPosition.transit:
-        return 'GEAR TRANSIT';
-      case proto.GearPosition.up:
-        return 'GEAR UP';
-      default:
-        return 'GEAR --';
-    }
-  }
+  final bool active;
+  final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
-    final t = telemetry;
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-        children: [
-          Text(t == null
-              ? 'FLAP --/--'
-              : 'FLAP ${t.flapHandleIndex}/${t.flapHandleIndexMax}'),
-          Text(_gearLabel),
-        ],
+    final scheme = Theme.of(context).colorScheme;
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 72,
+        height: 72,
+        decoration: BoxDecoration(
+          color: active ? scheme.primary : scheme.surfaceContainerHighest,
+          shape: BoxShape.circle,
+        ),
+        alignment: Alignment.center,
+        child: Icon(Icons.local_parking,
+            color: active ? scheme.onPrimary : scheme.onSurface),
       ),
     );
   }
