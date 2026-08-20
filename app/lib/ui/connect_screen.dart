@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../state/connection.dart';
 import '../network/udp_client.dart';
 import 'control_screen.dart';
+import 'scan_screen.dart';
 
 const _prefsHostKey = 'mhotas.server.host';
 const _prefsPortKey = 'mhotas.server.port';
@@ -100,6 +101,17 @@ class _ConnectScreenState extends ConsumerState<ConnectScreen> {
     _statusSub = null;
   }
 
+  Future<void> _scanAndConnect() async {
+    final result = await Navigator.of(context).push<(String, int)>(
+      MaterialPageRoute(builder: (_) => const ScanScreen()),
+    );
+    if (result == null || !mounted) return;
+    final (host, port) = result;
+    _hostController.text = host;
+    _portController.text = '$port';
+    await _connect();
+  }
+
   @override
   void dispose() {
     _closeStatusSub();
@@ -123,6 +135,23 @@ class _ConnectScreenState extends ConsumerState<ConnectScreen> {
               style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 24),
+            OutlinedButton.icon(
+              onPressed: _connecting ? null : _scanAndConnect,
+              icon: const Icon(Icons.qr_code_scanner),
+              label: const Text('Scan QR code'),
+            ),
+            const SizedBox(height: 16),
+            const Row(
+              children: [
+                Expanded(child: Divider()),
+                Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 12),
+                  child: Text('or enter manually'),
+                ),
+                Expanded(child: Divider()),
+              ],
+            ),
+            const SizedBox(height: 16),
             TextField(
               controller: _hostController,
               decoration: const InputDecoration(labelText: 'Server IP address'),
