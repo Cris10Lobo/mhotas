@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
@@ -45,7 +46,15 @@ type Model struct {
 	qr          string
 	qrErr       error
 
-	height int
+	// logs is a bounded, scrollable viewport rather than "however many
+	// lines fit" computed from a guessed chrome height — a fixed-size
+	// component structurally can't push the header/panes above it out of
+	// view the way a misjudged line-count budget did (the header/panes
+	// were shorter than their real rendered height once the QR code's own
+	// size was accounted for, so more log lines were shown than actually
+	// fit, and the terminal scrolled everything up as a result).
+	logs      viewport.Model
+	logsReady bool // false until the first WindowSizeMsg gives real dimensions
 }
 
 func New(srv *transport.Server, backend control.Output, tail *LogTail) Model {
@@ -75,21 +84,77 @@ func (m Model) Init() tea.Cmd {
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		m.height = msg.Height
+		// Measured, not guessed: an earlier version used a hardcoded
+		// constant here that didn't account for the QR code's own height
+		// (it scales with the connect string's length), which was the
+		// actual root cause of logs pushing the header/panes off-screen —
+		// the log budget was computed against a chrome height smaller than
+		// chrome actually was. lipgloss.Height measures what really
+		// rendered, so this can't drift out of sync with topBlock/
+		// headerBlock again.
+		//
+		// The banner+QR+status block alone is ~30 rows — below that
+		// terminal height there's no room for any log pane regardless
+		// (see the zero-floor comment below), and eventually not even for
+		// the full header on a truly tiny terminal. That's an inherent
+		// size floor of the dashboard, not a bug to route around here.
+		chromeHeight := lipgloss.Height(m.headerBlock()) + 1 /* blank */ +
+			lipgloss.Height(m.topBlock()) + 1 /* blank */ + 1 /* "Recent activity" label */
+		// No floor here on purpose: a forced minimum (log pane always at
+		// least N lines) is exactly the bug this replaced — on a terminal
+		// too short to fit the header/panes plus any logs, an empty log
+		// pane is the correct outcome, not a guaranteed overflow.
+		logHeight := max(msg.Height-chromeHeight, 0)
+		if !m.logsReady {
+			m.logs = viewport.New(msg.Width, logHeight)
+			m.logsReady = true
+		} else {
+			m.logs.Width = msg.Width
+			m.logs.Height = logHeight
+		}
+		m.refreshLogs()
 		return m, nil
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "q", "ctrl+c", "esc":
 			return m, tea.Quit
 		}
-		return m, nil
+		var cmd tea.Cmd
+		m.logs, cmd = m.logs.Update(msg) // arrow/j-k/pgup-pgdn/u-d — see viewport.DefaultKeyMap
+		return m, cmd
 	case tickMsg:
+		m.refreshLogs()
 		return m, tick()
 	}
 	return m, nil
 }
 
-func (m Model) View() string {
+// refreshLogs pushes the latest tail into the viewport, auto-following new
+// lines the way `tail -f` does — but only if the user was already at the
+// bottom, so scrolling up to read older lines doesn't get yanked back down
+// by the next tick.
+func (m *Model) refreshLogs() {
+	if !m.logsReady {
+		return
+	}
+	wasAtBottom := m.logs.AtBottom()
+	m.logs.SetContent(strings.Join(m.tail.Lines(), "\n"))
+	if wasAtBottom {
+		m.logs.GotoBottom()
+	}
+}
+
+func (m Model) headerBlock() string {
+	header := bannerStyle.Render(m.banner)
+	if m.banner == "" {
+		header = titleStyle.Render("mHOTAS Server") // renderBanner failed — plain-text fallback
+	}
+	subheader := subtitleStyle.Render("Mobile Hands On Throttle And Stick") +
+		"   " + dimStyle.Render("(q to quit, ↑/↓ to scroll log)")
+	return header + "\n" + subheader
+}
+
+func (m Model) topBlock() string {
 	var connectPane string
 	if m.qrErr != nil {
 		connectPane = fmt.Sprintf("QR unavailable: %s\n\nEnter the server's address\nmanually in the app.", m.qrErr)
@@ -105,38 +170,21 @@ func (m Model) View() string {
 		"Phone:    " + dot(status.DeviceConnected) + " " + phoneLabel(status),
 	}, "\n")
 
-	top := lipgloss.JoinHorizontal(lipgloss.Top,
+	return lipgloss.JoinHorizontal(lipgloss.Top,
 		paneStyle.Render(connectPane),
 		paneStyle.Render(statusPane),
 	)
-
-	logPane := m.logView()
-
-	header := bannerStyle.Render(m.banner)
-	if m.banner == "" {
-		header = titleStyle.Render("mHOTAS Server") // renderBanner failed — plain-text fallback
-	}
-	subheader := subtitleStyle.Render("Mobile Hands On Throttle And Stick") +
-		"   " + dimStyle.Render("(q to quit)")
-
-	return header + "\n" + subheader +
-		"\n\n" + top + "\n\n" + dimStyle.Render("Recent activity") + "\n" + logPane + "\n"
 }
 
-// logView shows the tail end of recent log lines, sized to whatever
-// terminal height is left after the header/panes above — a fixed count
-// would either waste space on a tall terminal or overflow a short one.
-func (m Model) logView() string {
-	// The larry3d banner is ~9 lines tall on its own; folded into one
-	// approximate constant along with the panes/labels below it rather
-	// than measuring every element's real height live.
-	const chromeLines = 21
-	maxLines := max(m.height-chromeLines, 3)
-	lines := m.tail.Lines()
-	if len(lines) > maxLines {
-		lines = lines[len(lines)-maxLines:]
+func (m Model) View() string {
+	if !m.logsReady {
+		// First frame, before any WindowSizeMsg has arrived — bubbletea
+		// sends one immediately on start, so this is on screen for a
+		// single frame at most.
+		return m.headerBlock() + "\n\n" + m.topBlock() + "\n"
 	}
-	return dimStyle.Render(strings.Join(lines, "\n"))
+	return m.headerBlock() + "\n\n" + m.topBlock() +
+		"\n\n" + dimStyle.Render("Recent activity") + "\n" + m.logs.View()
 }
 
 func dot(ok bool) string {
