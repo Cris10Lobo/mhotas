@@ -63,6 +63,12 @@ type aircraftStateData struct {
 	GearPositionPercent    int32
 	ThrottleLeverPercent   int32
 	ParkingBrakeSet        int32
+	// The 4 fields below are continuous simvars SimConnect reports as
+	// doubles, unlike the naturally-integer index/percent fields above.
+	AirspeedKnots    float64
+	AltitudeFeet     float64
+	HeadingDegrees   float64
+	VerticalSpeedFpm float64
 }
 
 type AircraftState struct {
@@ -88,6 +94,16 @@ type AircraftState struct {
 	// the brake is actually set rather than assuming it never changes
 	// outside a button tap. Not yet confirmed against a live sim.
 	ParkingBrakeSet int32
+	// AirspeedKnots is AIRSPEED INDICATED, knots. Feeds a configurable
+	// status tile rather than any control path. Not yet confirmed against
+	// a live sim.
+	AirspeedKnots float64
+	// AltitudeFeet is INDICATED ALTITUDE, feet.
+	AltitudeFeet float64
+	// HeadingDegrees is PLANE HEADING DEGREES MAGNETIC, degrees.
+	HeadingDegrees float64
+	// VerticalSpeedFpm is VERTICAL SPEED, feet/minute.
+	VerticalSpeedFpm float64
 }
 
 // LatestState returns the most recent aircraft-state reading, or false if
@@ -186,6 +202,10 @@ func setupTelemetryRead(client engine.Client) {
 	client.AddToDataDefinition(defAircraftState, "GEAR POSITION", "percent", types.SIMCONNECT_DATATYPE_INT32, 0, 2)
 	client.AddToDataDefinition(defAircraftState, "GENERAL ENG THROTTLE LEVER POSITION:1", "percent", types.SIMCONNECT_DATATYPE_INT32, 0, 3)
 	client.AddToDataDefinition(defAircraftState, "BRAKE PARKING POSITION", "bool", types.SIMCONNECT_DATATYPE_INT32, 0, 4)
+	client.AddToDataDefinition(defAircraftState, "AIRSPEED INDICATED", "knots", types.SIMCONNECT_DATATYPE_FLOAT64, 0, 5)
+	client.AddToDataDefinition(defAircraftState, "INDICATED ALTITUDE", "feet", types.SIMCONNECT_DATATYPE_FLOAT64, 0, 6)
+	client.AddToDataDefinition(defAircraftState, "PLANE HEADING DEGREES MAGNETIC", "degrees", types.SIMCONNECT_DATATYPE_FLOAT64, 0, 7)
+	client.AddToDataDefinition(defAircraftState, "VERTICAL SPEED", "feet/minute", types.SIMCONNECT_DATATYPE_FLOAT64, 0, 8)
 
 	client.RequestDataOnSimObject(
 		reqAircraftState, defAircraftState,
@@ -220,6 +240,10 @@ func (c *Client) watchTelemetry(messages <-chan engine.Message) {
 			GearPositionPercent:    as.GearPositionPercent,
 			ThrottleLeverPercent:   as.ThrottleLeverPercent,
 			ParkingBrakeSet:        as.ParkingBrakeSet,
+			AirspeedKnots:          as.AirspeedKnots,
+			AltitudeFeet:           as.AltitudeFeet,
+			HeadingDegrees:         as.HeadingDegrees,
+			VerticalSpeedFpm:       as.VerticalSpeedFpm,
 		})
 	}
 }
