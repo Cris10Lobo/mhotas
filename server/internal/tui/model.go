@@ -13,11 +13,13 @@ import (
 )
 
 var (
-	titleStyle = lipgloss.NewStyle().Bold(true)
-	dimStyle   = lipgloss.NewStyle().Faint(true)
-	okStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("2")) // green
-	waitStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("3")) // yellow
-	paneStyle  = lipgloss.NewStyle().
+	titleStyle    = lipgloss.NewStyle().Bold(true)
+	bannerStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("39")).Bold(true) // sky blue
+	subtitleStyle = lipgloss.NewStyle().Faint(true).Italic(true)
+	dimStyle      = lipgloss.NewStyle().Faint(true)
+	okStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("2")) // green
+	waitStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("3")) // yellow
+	paneStyle     = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			Padding(0, 1)
 )
@@ -37,6 +39,8 @@ type Model struct {
 	backend control.Output
 	tail    *LogTail
 
+	banner string // rendered once at startup, static for the process lifetime
+
 	connectAddr string
 	qr          string
 	qrErr       error
@@ -46,6 +50,13 @@ type Model struct {
 
 func New(srv *transport.Server, backend control.Output, tail *LogTail) Model {
 	m := Model{srv: srv, backend: backend, tail: tail}
+
+	// Non-fatal if this fails (a font-data bug, say) — the dashboard's job
+	// is showing sim/device status, not the banner; fall back to plain
+	// text rather than let a cosmetic failure take down the display.
+	if banner, err := renderBanner(); err == nil {
+		m.banner = banner
+	}
 
 	ip, err := localIPv4()
 	if err != nil {
@@ -101,7 +112,14 @@ func (m Model) View() string {
 
 	logPane := m.logView()
 
-	return titleStyle.Render("mHOTAS Server") + "  " + dimStyle.Render("(q to quit)") +
+	header := bannerStyle.Render(m.banner)
+	if m.banner == "" {
+		header = titleStyle.Render("mHOTAS Server") // renderBanner failed — plain-text fallback
+	}
+	subheader := subtitleStyle.Render("Mobile Hands On Throttle And Stick") +
+		"   " + dimStyle.Render("(q to quit)")
+
+	return header + "\n" + subheader +
 		"\n\n" + top + "\n\n" + dimStyle.Render("Recent activity") + "\n" + logPane + "\n"
 }
 
@@ -109,7 +127,10 @@ func (m Model) View() string {
 // terminal height is left after the header/panes above — a fixed count
 // would either waste space on a tall terminal or overflow a short one.
 func (m Model) logView() string {
-	const chromeLines = 12 // header + panes + labels, approximated once rather than measured live
+	// The larry3d banner is ~9 lines tall on its own; folded into one
+	// approximate constant along with the panes/labels below it rather
+	// than measuring every element's real height live.
+	const chromeLines = 21
 	maxLines := max(m.height-chromeLines, 3)
 	lines := m.tail.Lines()
 	if len(lines) > maxLines {
