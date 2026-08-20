@@ -21,16 +21,18 @@ import (
 
 // Client event IDs: arbitrary but must be unique within a connection.
 const (
-	eventAxisElevator  uint32 = 1
-	eventAxisAileron   uint32 = 2
-	eventAxisRudder    uint32 = 3
-	eventGearToggle    uint32 = 4
-	eventParkingBrake  uint32 = 5
-	eventPauseSet      uint32 = 6
-	eventThrottleEx1   uint32 = 7
-	eventReverseToggle uint32 = 8
-	eventFlapsIncr     uint32 = 9
-	eventFlapsDecr     uint32 = 10
+	eventAxisElevator   uint32 = 1
+	eventAxisAileron    uint32 = 2
+	eventAxisRudder     uint32 = 3
+	eventGearToggle     uint32 = 4
+	eventParkingBrake   uint32 = 5
+	eventPauseSet       uint32 = 6
+	eventThrottleEx1    uint32 = 7
+	eventReverseToggle  uint32 = 8
+	eventFlapsIncr      uint32 = 9
+	eventFlapsDecr      uint32 = 10
+	eventAxisLeftBrake  uint32 = 11
+	eventAxisRightBrake uint32 = 12
 
 	notificationGroup uint32 = 1
 
@@ -187,12 +189,15 @@ func setupEvents(client engine.Client) {
 	client.MapClientEventToSimEvent(eventReverseToggle, "THROTTLE_REVERSE_THRUST_TOGGLE")
 	client.MapClientEventToSimEvent(eventFlapsIncr, "FLAPS_INCR")
 	client.MapClientEventToSimEvent(eventFlapsDecr, "FLAPS_DECR")
+	client.MapClientEventToSimEvent(eventAxisLeftBrake, "AXIS_LEFT_BRAKE_SET")
+	client.MapClientEventToSimEvent(eventAxisRightBrake, "AXIS_RIGHT_BRAKE_SET")
 
 	for _, id := range []uint32{
 		eventAxisElevator, eventAxisAileron, eventAxisRudder,
 		eventGearToggle, eventParkingBrake, eventPauseSet,
 		eventThrottleEx1, eventReverseToggle,
 		eventFlapsIncr, eventFlapsDecr,
+		eventAxisLeftBrake, eventAxisRightBrake,
 	} {
 		client.AddClientEventToNotificationGroup(notificationGroup, id, false)
 	}
@@ -308,6 +313,21 @@ func (c *Client) ToggleReverseThrust() error { return c.transmit(eventReverseTog
 
 // SetRudder sends a raw AXIS_RUDDER_SET value, range -AxisRange..AxisRange.
 func (c *Client) SetRudder(raw int32) error { return c.transmit(eventAxisRudder, uint32(raw)) }
+
+// SetToeBrakes drives AXIS_LEFT_BRAKE_SET/AXIS_RIGHT_BRAKE_SET to full
+// (applied) or zero (released). Not a proportional control: both axes are
+// documented as non-linear and asymmetric to each other, so there's no
+// usable "brake X%" mapping — this only ever asks for max or nothing.
+func (c *Client) SetToeBrakes(applied bool) error {
+	var raw uint32
+	if applied {
+		raw = AxisRange
+	}
+	if err := c.transmit(eventAxisLeftBrake, raw); err != nil {
+		return err
+	}
+	return c.transmit(eventAxisRightBrake, raw)
+}
 
 // ToggleGear fires GEAR_TOGGLE.
 func (c *Client) ToggleGear() error { return c.transmit(eventGearToggle, 0) }

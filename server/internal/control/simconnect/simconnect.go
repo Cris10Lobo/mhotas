@@ -24,6 +24,7 @@ const (
 	buttonPause        control.ButtonID = 3
 	buttonFlapIncr     control.ButtonID = 4
 	buttonFlapDecr     control.ButtonID = 5
+	buttonToeBrake     control.ButtonID = 6
 )
 
 type Backend struct {
@@ -81,6 +82,12 @@ func (b *Backend) SetAxis(axis control.AxisID, value float64) error {
 }
 
 func (b *Backend) SetButton(id control.ButtonID, pressed bool) error {
+	// Toe brake is momentary (apply while held, release on lift), unlike
+	// gear/parking brake/pause which are all press-only toggles — so it
+	// needs the release edge and must run before the !pressed early return.
+	if id == buttonToeBrake {
+		return b.client.SetToeBrakes(pressed)
+	}
 	if !pressed {
 		return nil // gear/parking brake/pause/flaps all act on press only
 	}
