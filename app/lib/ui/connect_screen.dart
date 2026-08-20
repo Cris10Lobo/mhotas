@@ -124,10 +124,13 @@ class _ConnectScreenState extends ConsumerState<ConnectScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('mHOTAS')),
-      body: Padding(
+      // SingleChildScrollView, not a plain Padding+Column: the "Scan QR
+      // code" button + divider added above the original two fields pushed
+      // total content height past what fits on a shorter screen (or with
+      // the keyboard up), overflowing a fixed Column — reported live.
+      body: SingleChildScrollView(
         padding: const EdgeInsets.all(24),
         child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             const Text(
