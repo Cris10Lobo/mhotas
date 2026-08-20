@@ -17,6 +17,7 @@ class ButtonIds {
   static const int gear = 1;
   static const int parkingBrake = 2;
   static const int pause = 3;
+  static const int toeBrake = 6;
 }
 
 /// The primary flying screen, styled after X-Plane Mobile: tilt the phone
@@ -165,6 +166,14 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
               child: _RudderStick(
                 onChanged: (v) =>
                     ref.read(sliderAxisProvider.notifier).setRudder(v),
+              ),
+            ),
+            Positioned(
+              right: 16,
+              bottom: 16,
+              child: _ToeBrake(
+                onPressedChanged: (pressed) =>
+                    _sendButton(ButtonIds.toeBrake, pressed),
               ),
             ),
           ],
@@ -541,6 +550,53 @@ class _BigButton extends StatelessWidget {
       child: active
           ? FilledButton(onPressed: onTap, child: Text(label))
           : FilledButton.tonal(onPressed: onTap, child: Text(label)),
+    );
+  }
+}
+
+/// Toe brake: tap-and-hold, not a slider. AXIS_LEFT_BRAKE_SET/
+/// AXIS_RIGHT_BRAKE_SET are documented as non-linear and asymmetric to each
+/// other, so there's no usable proportional "brake X%" — this only ever
+/// sends full-apply on press and full-release on lift. Note: if the sim's
+/// parking brake is engaged, holding this may show no visible effect —
+/// that's the parking-brake interlock, not a bug here.
+class _ToeBrake extends StatefulWidget {
+  const _ToeBrake({required this.onPressedChanged});
+
+  final ValueChanged<bool> onPressedChanged;
+
+  @override
+  State<_ToeBrake> createState() => _ToeBrakeState();
+}
+
+class _ToeBrakeState extends State<_ToeBrake> {
+  bool _pressed = false;
+
+  void _setPressed(bool pressed) {
+    if (_pressed == pressed) return;
+    setState(() => _pressed = pressed);
+    widget.onPressedChanged(pressed);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return GestureDetector(
+      onTapDown: (_) => _setPressed(true),
+      onTapUp: (_) => _setPressed(false),
+      onTapCancel: () => _setPressed(false),
+      child: Container(
+        width: 72,
+        height: 72,
+        decoration: BoxDecoration(
+          color: _pressed ? scheme.error : scheme.surfaceContainerHighest,
+          shape: BoxShape.circle,
+        ),
+        alignment: Alignment.center,
+        child: Text('BRK',
+            style: TextStyle(
+                color: _pressed ? scheme.onError : scheme.onSurface)),
+      ),
     );
   }
 }
