@@ -30,4 +30,8 @@ func (b *Backend) SetButton(id control.ButtonID, pressed bool) error {
 	return nil
 }
 
+// Ready is always true — there's no external connection to be ready for,
+// logging always "works".
+func (b *Backend) Ready() bool { return true }
+
 func (b *Backend) Close() error { return nil }

@@ -32,12 +32,41 @@ type Server struct {
 
 	mu                sync.Mutex
 	clientAddr        *net.UDPAddr
+	deviceName        string
+	lastRxAt          time.Time
 	lastAxisAt        time.Time
 	failsafeApplied   bool
 	lastButtonEvent   map[uint8]uint16
 	lastShaped        map[control.AxisID]float64
 	outSeq            uint16
 	lastBackendWarnAt time.Time
+}
+
+// deviceLivenessTimeout mirrors the app's own UdpClient liveness check
+// (app/lib/network/udp_client.dart) — past this long since any valid packet
+// from the phone, Status() reports it disconnected rather than showing a
+// stale "still connected" from before a WiFi drop or the app closing.
+const deviceLivenessTimeout = 3 * time.Second
+
+// Status is a point-in-time snapshot of what the server is doing right now
+// — for display (the TUI), not for control-flow decisions, which all live
+// on the fields above directly.
+type Status struct {
+	ListenAddr      string
+	DeviceName      string
+	DeviceConnected bool
+	LastPhoneSeen   time.Time
+}
+
+func (s *Server) Status() Status {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return Status{
+		ListenAddr:      s.conn.LocalAddr().String(),
+		DeviceName:      s.deviceName,
+		DeviceConnected: s.clientAddr != nil && time.Since(s.lastRxAt) < deviceLivenessTimeout,
+		LastPhoneSeen:   s.lastRxAt,
+	}
 }
 
 func New(cfg config.Config, backend control.Output, log *slog.Logger) (*Server, error) {
@@ -109,6 +138,9 @@ func (s *Server) handlePacket(addr *net.UDPAddr, data []byte) {
 		s.log.Warn("bad header", "err", err, "from", addr)
 		return
 	}
+	s.mu.Lock()
+	s.lastRxAt = time.Now()
+	s.mu.Unlock()
 	// Only HELLO gets a version-mismatch reply; other stray packets from an
 	// incompatible client are just dropped rather than acted on.
 	if hdr.Version != protocol.Version && hdr.Type != protocol.TypeHello {
@@ -149,6 +181,7 @@ func (s *Server) handleHello(addr *net.UDPAddr, hdr protocol.Header, data []byte
 	if status == protocol.HelloOK {
 		s.mu.Lock()
 		s.clientAddr = addr
+		s.deviceName = hello.DeviceName
 		s.lastAxisAt = time.Now()
 		s.failsafeApplied = false
 		s.lastButtonEvent = make(map[uint8]uint16)

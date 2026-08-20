@@ -16,8 +16,11 @@ import (
 	"os/signal"
 	"syscall"
 
+	tea "github.com/charmbracelet/bubbletea"
+
 	"mhotas/internal/config"
 	"mhotas/internal/transport"
+	"mhotas/internal/tui"
 )
 
 func main() {
@@ -31,10 +34,28 @@ func run() error {
 	var (
 		backendName = flag.String("backend", "log", "control output backend: log, simconnect, vjoy")
 		configPath  = flag.String("config", "", "path to a JSON config file (optional; defaults are used if omitted)")
+		uiMode      = flag.String("ui", "auto", "display mode: auto, tui, plain (auto = tui when stdout is a terminal)")
 	)
 	flag.Parse()
 
-	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	useTUI := *uiMode == "tui" || (*uiMode == "auto" && isTerminal(os.Stdout))
+	if *uiMode != "auto" && *uiMode != "tui" && *uiMode != "plain" {
+		return fmt.Errorf("unknown -ui %q (want auto, tui, or plain)", *uiMode)
+	}
+
+	// TUI mode owns the terminal (alternate screen) — logging straight to
+	// stdout would corrupt it, so route through a tail the dashboard polls
+	// instead of a stream, same reasoning as the app suppressing a moved
+	// widget's own gestures during layout-edit mode: only one thing gets to
+	// own the display surface at a time.
+	var tail *tui.LogTail
+	var log *slog.Logger
+	if useTUI {
+		tail = tui.NewLogTail(500)
+		log = slog.New(tail)
+	} else {
+		log = slog.New(slog.NewTextHandler(os.Stdout, nil))
+	}
 
 	cfg, err := config.Load(*configPath)
 	if err != nil {
@@ -56,7 +77,32 @@ func run() error {
 	}
 	startTelemetry(ctx, backend, srv, log)
 
-	log.Info("mhotas-server listening", "addr", srv.Addr(), "backend", backend.Name())
+	if !useTUI {
+		log.Info("mhotas-server listening", "addr", srv.Addr(), "backend", backend.Name())
+		return srv.Run(ctx)
+	}
 
-	return srv.Run(ctx)
+	serverErr := make(chan error, 1)
+	go func() { serverErr <- srv.Run(ctx) }()
+
+	p := tea.NewProgram(tui.New(srv, backend, tail), tea.WithAltScreen())
+	// A signal (Ctrl+C at the OS level, not the TUI's own 'q'/ctrl+c key
+	// handling) cancels ctx directly — make sure that also tears down the
+	// TUI instead of leaving it on screen after the server's already gone.
+	go func() {
+		<-ctx.Done()
+		p.Quit()
+	}()
+
+	_, runErr := p.Run()
+	stop() // 'q' in the TUI only quits the TUI; cancel ctx so srv.Run exits too
+	if srvErr := <-serverErr; srvErr != nil && runErr == nil {
+		runErr = srvErr
+	}
+	return runErr
+}
+
+func isTerminal(f *os.File) bool {
+	fi, err := f.Stat()
+	return err == nil && fi.Mode()&os.ModeCharDevice != 0
 }

@@ -131,6 +131,13 @@ func (c *Client) Paused() bool {
 	return c.paused.Load()
 }
 
+// Ready reports whether the SimConnect handshake has completed and events/
+// telemetry are actually flowing — false while waiting for MSFS2024 to
+// launch or reconnecting after it closes.
+func (c *Client) Ready() bool {
+	return c.ready.Load()
+}
+
 // Connect starts the SimConnect manager in the background and returns
 // immediately; it does not wait for MSFS2024 to be reachable — auto-
 // reconnect (sim not running yet / paused / restarted) is handled
