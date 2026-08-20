@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -8,8 +9,11 @@ import '../network/protocol.dart' as proto;
 import '../network/udp_client.dart';
 import '../sensors/attitude.dart';
 import '../state/connection.dart';
+import '../state/settings.dart';
 import '../state/slider_axis.dart';
+import '../state/status_tiles.dart';
 import '../state/telemetry.dart';
+import 'settings_screen.dart';
 
 /// Button IDs used by this screen's MVP button set — must match whatever
 /// the server config maps them to (server/internal/config).
@@ -17,6 +21,12 @@ class ButtonIds {
   static const int gear = 1;
   static const int parkingBrake = 2;
   static const int pause = 3;
+  static const int flapIncr = 4;
+  static const int flapDecr = 5;
+  static const int toeBrake = 6;
+  static const int spoilerIncr = 7;
+  static const int spoilerDecr = 8;
+  static const int spoilerArm = 9;
 }
 
 /// The primary flying screen, styled after X-Plane Mobile: tilt the phone
@@ -33,9 +43,25 @@ class ControlScreen extends ConsumerStatefulWidget {
 class _ControlScreenState extends ConsumerState<ControlScreen> {
   final _attitudeStream = AttitudeStream();
   Attitude _attitude = const Attitude(pitch: 0, roll: 0);
+  // x: roll, y: pitch — same axis mapping _TiltIndicator already uses for
+  // Alignment(roll, pitch), so the joystick reads the same way the tilt
+  // display does.
+  Offset _joystick = Offset.zero;
   StreamSubscription<Attitude>? _attitudeSub;
   Timer? _sendTimer;
   int _buttonEventId = 0;
+  List<StatusTileKind> _tileKinds = defaultStatusTileKinds;
+
+  // No spoilersArmed TELEMETRY field exists yet (that would be a protocol
+  // change, out of scope for this milestone), so — unlike the pause/parking
+  // brake buttons — there's nothing to read the real state back from; this
+  // button just remembers its own last-toggled state, same as the server's
+  // Backend.spoilerArmed.
+  //
+  // ponytail: this and the server's copy can drift (restart either side, or
+  // drop all 3 redundant BUTTON packets) with nothing to reconcile them —
+  // add a spoilersArmed TELEMETRY field if that turns out to matter live.
+  bool _speedbrakeArmed = false;
 
   @override
   void initState() {
@@ -47,13 +73,28 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
     });
     _sendTimer = Timer.periodic(
         const Duration(milliseconds: 33), (_) => _sendAxis()); // ~30Hz
+    _loadTileKinds();
+  }
+
+  Future<void> _loadTileKinds() async {
+    final kinds = await loadStatusTileKinds();
+    if (!mounted) return;
+    setState(() => _tileKinds = kinds);
+  }
+
+  Future<void> _openSettings() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const SettingsScreen()),
+    );
+    _loadTileKinds(); // pick up any tile choices changed while there
   }
 
   void _sendAxis() {
     final slider = ref.read(sliderAxisProvider);
+    final manualJoystick = ref.read(manualJoystickProvider);
     ref.read(udpClientProvider).sendAxis(proto.Axis(
-          pitch: _attitude.pitch,
-          roll: _attitude.roll,
+          pitch: manualJoystick ? _joystick.dy : _attitude.pitch,
+          roll: manualJoystick ? _joystick.dx : _attitude.roll,
           throttle: slider.throttle,
           rudder: slider.rudder,
         ));
@@ -76,6 +117,32 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
 
   void _togglePause() => _tapButton(ButtonIds.pause);
 
+  // There's no SimConnect event to set an exact flap handle index — only
+  // FLAPS_INCR/FLAPS_DECR, one detent per event — so [steps] detents of
+  // difference becomes [steps] sequential taps, awaited one at a time so
+  // each lands as its own press/release BUTTON pair.
+  Future<void> _stepFlaps(int steps) async {
+    final id = steps > 0 ? ButtonIds.flapIncr : ButtonIds.flapDecr;
+    for (var i = 0; i < steps.abs(); i++) {
+      await _tapButton(id);
+    }
+  }
+
+  // One INCR/DECR tap per detent crossed, same discrete-step reasoning as
+  // the lever widget itself: SimConnect has no exact-detent "set spoiler
+  // position" event, only step events.
+  Future<void> _stepSpeedbrake(int delta) async {
+    final id = delta > 0 ? ButtonIds.spoilerIncr : ButtonIds.spoilerDecr;
+    for (var i = 0; i < delta.abs(); i++) {
+      await _tapButton(id);
+    }
+  }
+
+  void _toggleSpeedbrakeArm() {
+    setState(() => _speedbrakeArmed = !_speedbrakeArmed);
+    _tapButton(ButtonIds.spoilerArm);
+  }
+
   @override
   void dispose() {
     _sendTimer?.cancel();
@@ -89,6 +156,7 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
   Widget build(BuildContext context) {
     final connectionStatus = ref.watch(connectionStatusProvider).valueOrNull;
     final telemetry = ref.watch(telemetryProvider).valueOrNull;
+    final manualJoystick = ref.watch(manualJoystickProvider);
 
     // Pause state comes from the sim's own Pause system event (TELEMETRY),
     // not a locally-guessed toggle — so an external pause/unpause (the Esc
@@ -107,10 +175,15 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
       appBar: AppBar(
         title: const Text('mHOTAS'),
         actions: [
-          IconButton(
+          TextButton.icon(
             icon: const Icon(Icons.center_focus_strong),
-            tooltip: 'Recenter tilt',
+            label: const Text('Calibrate'),
             onPressed: _attitudeStream.recenter,
+          ),
+          IconButton(
+            icon: const Icon(Icons.settings),
+            tooltip: 'Settings',
+            onPressed: _openSettings,
           ),
         ],
       ),
@@ -121,12 +194,57 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
               children: [
                 _ConnectionBanner(status: connectionStatus),
                 _TelemetryRow(telemetry: telemetry),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Padding(
+                    padding: const EdgeInsets.only(left: 16),
+                    child: _StatusTilesRow(
+                        kinds: _tileKinds, telemetry: telemetry),
+                  ),
+                ),
                 Expanded(
                   child: Row(
                     children: [
                       Expanded(
-                          child: Center(
-                              child: _TiltIndicator(attitude: _attitude))),
+                        child: Center(
+                          child: manualJoystick
+                              ? _ManualJoystick(
+                                  onChanged: (v) =>
+                                      setState(() => _joystick = v))
+                              : _TiltIndicator(attitude: _attitude),
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            _BigButton(
+                              label: 'ARM',
+                              onTap: _toggleSpeedbrakeArm,
+                              active: _speedbrakeArmed,
+                              compact: true,
+                            ),
+                            const SizedBox(height: 8),
+                            _SpeedbrakeLever(onStep: _stepSpeedbrake),
+                          ],
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: _FlapLever(
+                          onStep: (steps) => _stepFlaps(steps),
+                          synced: telemetry?.flapHandleIndex,
+                          max: telemetry?.flapHandleIndexMax,
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: _ToeBrake(
+                          onPressedChanged: (pressed) =>
+                              _sendButton(ButtonIds.toeBrake, pressed),
+                        ),
+                      ),
                       _ThrottleLever(
                         onChanged: (v) => ref
                             .read(sliderAxisProvider.notifier)
@@ -181,15 +299,20 @@ class _ConnectionBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final connected = status == ConnectionStatus.connected;
-    return Container(
-      width: double.infinity,
-      color: connected ? Colors.green.shade700 : Colors.red.shade700,
+    // versionMismatch/error/null all read as "not usable" to the pilot —
+    // same as disconnected — so they share its label and color rather than
+    // adding states nobody asked to distinguish at a glance.
+    final (label, color) = switch (status) {
+      ConnectionStatus.connected => ('Connected', Colors.green),
+      ConnectionStatus.connecting => ('Connecting', Colors.orange),
+      _ => ('Disconnected', Colors.red),
+    };
+    return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Text(
-        connected ? 'Connected' : 'Connection lost',
+        'mHOTAS · $label',
         textAlign: TextAlign.center,
-        style: const TextStyle(color: Colors.white),
+        style: TextStyle(color: color, fontWeight: FontWeight.bold),
       ),
     );
   }
@@ -231,36 +354,155 @@ class _TelemetryRow extends StatelessWidget {
   }
 }
 
+/// 4 configurable status tiles (default: airspeed/altitude/heading/vertical
+/// speed) — which simvar each one shows is picked in SettingsScreen and
+/// persisted via status_tiles.dart.
+class _StatusTilesRow extends StatelessWidget {
+  const _StatusTilesRow({required this.kinds, required this.telemetry});
+
+  final List<StatusTileKind> kinds;
+  final proto.Telemetry? telemetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (final kind in kinds)
+          Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: _StatusTile(kind: kind, telemetry: telemetry),
+          ),
+      ],
+    );
+  }
+}
+
+class _StatusTile extends StatelessWidget {
+  const _StatusTile({required this.kind, required this.telemetry});
+
+  final StatusTileKind kind;
+  final proto.Telemetry? telemetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      width: 64,
+      height: 48,
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Text(kind.label, style: const TextStyle(fontSize: 10)),
+          Text(kind.valueOf(telemetry),
+              style:
+                  const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+        ],
+      ),
+    );
+  }
+}
+
 /// A small sanity/calibration aid, not the primary interaction surface —
 /// the user feels tilt physically, they don't watch this while flying.
+/// Styled as a simple artificial horizon rather than a dot-in-a-box: the
+/// sky/ground plane rotates with roll and shifts with pitch behind a fixed
+/// aircraft reference, plus a numeric readout for precise calibration checks.
 class _TiltIndicator extends StatelessWidget {
   const _TiltIndicator({required this.attitude});
 
   final Attitude attitude;
 
+  // Matches AttitudeStream's default maxTiltRadians (attitude.dart) — the
+  // normalized -1..1 attitude values are full-scale at this angle.
+  static const _maxTiltDegrees = 45.0;
+
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: 160,
-      height: 160,
-      decoration: BoxDecoration(
-        border: Border.all(color: Colors.grey),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Align(
-        alignment: Alignment(
-          attitude.roll.clamp(-1, 1),
-          attitude.pitch.clamp(-1, 1),
+    final pitchDeg = attitude.pitch * _maxTiltDegrees;
+    final rollDeg = attitude.roll * _maxTiltDegrees;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        ClipRRect(
+          borderRadius: BorderRadius.circular(8),
+          child: Container(
+            width: 160,
+            height: 160,
+            decoration: BoxDecoration(
+              border: Border.all(color: Colors.grey),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: CustomPaint(
+              size: const Size(160, 160),
+              painter: _HorizonPainter(pitchDeg: pitchDeg, rollDeg: rollDeg),
+            ),
+          ),
         ),
-        child: Container(
-          width: 20,
-          height: 20,
-          decoration:
-              const BoxDecoration(color: Colors.blue, shape: BoxShape.circle),
-        ),
-      ),
+        const SizedBox(height: 4),
+        Text('P: ${pitchDeg.round()}°  R: ${rollDeg.round()}°'),
+      ],
     );
   }
+}
+
+class _HorizonPainter extends CustomPainter {
+  _HorizonPainter({required this.pitchDeg, required this.rollDeg});
+
+  final double pitchDeg;
+  final double rollDeg;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = size.center(Offset.zero);
+    // Nose up shows more sky, so the horizon line moves down on screen as
+    // pitch increases; scaled so full deflection puts it at the box edge.
+    final pitchOffset =
+        pitchDeg / _TiltIndicator._maxTiltDegrees * size.height / 2;
+    // Oversized so the rotated sky/ground rectangles still cover the box's
+    // corners instead of leaving gaps at max bank.
+    final oversize = size.longestSide * 2;
+
+    canvas.save();
+    canvas.translate(center.dx, center.dy);
+    // Rotated opposite the roll sign: the aircraft reference stays fixed and
+    // level while the horizon appears to bank under it, matching a real AH.
+    canvas.rotate(-rollDeg * math.pi / 180);
+    canvas.drawRect(
+      Rect.fromLTWH(-oversize, -oversize + pitchOffset, oversize * 2, oversize),
+      Paint()..color = Colors.lightBlue.shade300,
+    );
+    canvas.drawRect(
+      Rect.fromLTWH(-oversize, pitchOffset, oversize * 2, oversize),
+      Paint()..color = Colors.brown.shade400,
+    );
+    canvas.drawLine(
+      Offset(-oversize, pitchOffset),
+      Offset(oversize, pitchOffset),
+      Paint()
+        ..color = Colors.white
+        ..strokeWidth = 2,
+    );
+    canvas.restore();
+
+    final aircraftPaint = Paint()
+      ..color = Colors.yellow.shade700
+      ..strokeWidth = 3
+      ..strokeCap = StrokeCap.round;
+    canvas.drawLine(Offset(center.dx - 24, center.dy),
+        Offset(center.dx - 8, center.dy), aircraftPaint);
+    canvas.drawLine(Offset(center.dx + 8, center.dy),
+        Offset(center.dx + 24, center.dy), aircraftPaint);
+    canvas.drawCircle(center, 3, aircraftPaint);
+  }
+
+  @override
+  bool shouldRepaint(_HorizonPainter oldDelegate) =>
+      oldDelegate.pitchDeg != pitchDeg || oldDelegate.rollDeg != rollDeg;
 }
 
 /// Throttle lever: -1 (full reverse) .. 1 (full forward). The forward half
@@ -434,6 +676,136 @@ class _ThrottleLeverState extends State<_ThrottleLever>
   }
 }
 
+/// Flap lever: discrete detents 0..[max] (from TELEMETRY's
+/// flapHandleIndexMax), unlike the throttle's continuous drag — a real flap
+/// handle only has fixed notches, and SimConnect only exposes
+/// FLAPS_INCR/FLAPS_DECR (step one detent at a time), not a set-to-index
+/// event, so dragging to a new detent and releasing sends that many INCR
+/// or DECR BUTTON taps rather than one absolute value.
+///
+/// [synced] is the sim's actual current flap handle index (from
+/// TELEMETRY) — same don't-fight-the-sim mirroring _ThrottleLever uses:
+/// while not dragging, the lever shows [synced] instead of a stale local
+/// guess, so an in-sim flap change shows up here too.
+class _FlapLever extends StatefulWidget {
+  const _FlapLever(
+      {required this.onStep, required this.synced, required this.max});
+
+  /// Requests [steps] detents of movement: positive = FLAPS_INCR taps,
+  /// negative = FLAPS_DECR taps.
+  final ValueChanged<int> onStep;
+  final int? synced;
+  final int? max;
+
+  @override
+  State<_FlapLever> createState() => _FlapLeverState();
+}
+
+class _FlapLeverState extends State<_FlapLever> {
+  static const _height = 160.0;
+  static const _knobHeight = 32.0;
+
+  bool _dragging = false;
+  double _dragFraction = 0; // 0 (up/retracted) .. 1 (down/full flaps)
+  int? _pendingDetent;
+
+  // Same rationale as _ThrottleLever._localCommandGrace: telemetry only
+  // arrives ~1x/sec, so right after a tap the last known `synced` reading
+  // is still the pre-tap value for up to a second — without this guard the
+  // lever would visually snap back to the old detent and then jump forward
+  // once telemetry catches up.
+  DateTime _lastLocalCommandAt = DateTime.fromMillisecondsSinceEpoch(0);
+  static const _localCommandGrace = Duration(milliseconds: 1200);
+
+  int get _max => widget.max ?? 0;
+
+  double _fractionFor(int index) => _max == 0 ? 0 : index / _max;
+
+  // Single source of truth for "what detent are we at right now" — used by
+  // drag-start (to seed the drag) and drag-end (to compute the step delta)
+  // alike, so both agree with what build() is showing. Using widget.synced
+  // directly in either of those (as opposed to this grace-guarded value)
+  // reintroduces the stale-telemetry race the grace window exists to avoid:
+  // a second drag within _localCommandGrace of the first would diff against
+  // the pre-tap synced value and double-send the already-taken steps.
+  int _currentDetent() {
+    final recentlyCommanded =
+        DateTime.now().difference(_lastLocalCommandAt) < _localCommandGrace;
+    return (recentlyCommanded ? _pendingDetent : null) ?? widget.synced ?? 0;
+  }
+
+  void _onDragStart(DragStartDetails details) {
+    _dragging = true;
+    _dragFraction = _fractionFor(_currentDetent());
+  }
+
+  void _onDragUpdate(DragUpdateDetails details) {
+    setState(() {
+      _dragFraction =
+          (_dragFraction + details.delta.dy / _height).clamp(0.0, 1.0);
+    });
+  }
+
+  void _onDragEnd(DragEndDetails details) {
+    if (_max > 0) {
+      final target = (_dragFraction * _max).round().clamp(0, _max);
+      final steps = target - _currentDetent();
+      if (steps != 0) widget.onStep(steps);
+      _pendingDetent = target;
+      _lastLocalCommandAt = DateTime.now();
+    }
+    setState(() => _dragging = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final displayIndex = _currentDetent();
+    final fraction = _dragging ? _dragFraction : _fractionFor(displayIndex);
+
+    return GestureDetector(
+      onVerticalDragStart: _onDragStart,
+      onVerticalDragUpdate: _onDragUpdate,
+      onVerticalDragEnd: _onDragEnd,
+      child: Container(
+        width: 56,
+        height: _height,
+        decoration: BoxDecoration(
+          color: scheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            const Positioned(
+                top: 6, child: Text('FLAP', style: TextStyle(fontSize: 11))),
+            Positioned(
+              bottom: 4,
+              child: Text(
+                widget.max == null ? '--/--' : '$displayIndex/${widget.max}',
+                style: const TextStyle(fontSize: 10),
+              ),
+            ),
+            AnimatedAlign(
+              duration: const Duration(milliseconds: 200),
+              alignment: Alignment(0, fraction * 2 - 1),
+              child: Container(
+                width: 44,
+                height: _knobHeight,
+                margin: const EdgeInsets.symmetric(horizontal: 4),
+                decoration: BoxDecoration(
+                  color: scheme.primary,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 /// Spring-loaded rudder control: drag left/right, release and it snaps
 /// back to neutral — unlike throttle, rudder shouldn't hold a deflection
 /// once you let go, matching physical rudder pedals.
@@ -520,6 +892,89 @@ class _RudderStickState extends State<_RudderStick>
   }
 }
 
+/// Settings-gated 2D pitch/roll input, replacing the tilt sensor as the
+/// AXIS pitch/roll source while enabled (see settings_screen.dart and
+/// _ControlScreenState._sendAxis). Same spring-back drag pattern as
+/// _RudderStick, extended from one axis to two.
+class _ManualJoystick extends StatefulWidget {
+  const _ManualJoystick({required this.onChanged});
+
+  final ValueChanged<Offset> onChanged; // dx/dy each -1..1
+
+  @override
+  State<_ManualJoystick> createState() => _ManualJoystickState();
+}
+
+class _ManualJoystickState extends State<_ManualJoystick>
+    with SingleTickerProviderStateMixin {
+  static const _size = 160.0;
+  static const _knobSize = 40.0;
+
+  Offset _value = Offset.zero; // dx/dy each -1..1
+  Offset _springBackFrom = Offset.zero;
+  late final AnimationController _springBack;
+
+  @override
+  void initState() {
+    super.initState();
+    _springBack = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 150))
+      ..addListener(() {
+        setState(() => _value = _springBackFrom * (1 - _springBack.value));
+        widget.onChanged(_value);
+      });
+  }
+
+  void _onDragUpdate(DragUpdateDetails details) {
+    _springBack.stop();
+    setState(() {
+      _value = Offset(
+        (_value.dx + details.delta.dx / (_size / 2)).clamp(-1.0, 1.0),
+        (_value.dy + details.delta.dy / (_size / 2)).clamp(-1.0, 1.0),
+      );
+    });
+    widget.onChanged(_value);
+  }
+
+  void _onDragEnd(DragEndDetails details) {
+    _springBackFrom = _value;
+    _springBack.forward(from: 0);
+  }
+
+  @override
+  void dispose() {
+    _springBack.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return GestureDetector(
+      onPanUpdate: _onDragUpdate,
+      onPanEnd: _onDragEnd,
+      child: Container(
+        width: _size,
+        height: _size,
+        decoration: BoxDecoration(
+          color: scheme.surfaceContainerHighest,
+          shape: BoxShape.circle,
+          border: Border.all(color: scheme.outline),
+        ),
+        child: Align(
+          alignment: Alignment(_value.dx, _value.dy),
+          child: Container(
+            width: _knobSize,
+            height: _knobSize,
+            decoration:
+                BoxDecoration(color: scheme.primary, shape: BoxShape.circle),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 /// [active] reflects the sim's actual current state for this button (e.g.
 /// TELEMETRY.parkingBrakeSet/.paused) where one exists, not just whether it
 /// was last tapped — so an external change (another control, the sim's own
@@ -527,20 +982,187 @@ class _RudderStickState extends State<_RudderStick>
 /// about what's really engaged.
 class _BigButton extends StatelessWidget {
   const _BigButton(
-      {required this.label, required this.onTap, this.active = false});
+      {required this.label,
+      required this.onTap,
+      this.active = false,
+      this.compact = false});
 
   final String label;
   final VoidCallback onTap;
   final bool active;
+  // Shrinks to a small toggle indicator (the spoiler ARM button) instead of
+  // the main button row's usual glanceable size.
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
+    final child =
+        Text(label, style: compact ? const TextStyle(fontSize: 11) : null);
     return SizedBox(
-      width: 120,
-      height: 56,
+      width: compact ? 64 : 120,
+      height: compact ? 36 : 56,
       child: active
-          ? FilledButton(onPressed: onTap, child: Text(label))
-          : FilledButton.tonal(onPressed: onTap, child: Text(label)),
+          ? FilledButton(onPressed: onTap, child: child)
+          : FilledButton.tonal(onPressed: onTap, child: child),
+    );
+  }
+}
+
+/// Speedbrake/spoiler lever: a small number of discrete detents (0..2, per
+/// the wireframe's "2/1/0" labels) rather than a continuous drag-to-target
+/// — SimConnect has no exact-detent "set spoiler position" event
+/// (SPOILERS_INC/SPOILERS_DEC only step it, same limitation as flaps), so
+/// dragging across a detent boundary sends one BUTTON tap per step instead
+/// of an absolute value. Up = more deployed, matching the throttle lever's
+/// up-is-more convention.
+///
+/// Unlike the throttle lever, there is no TELEMETRY field for spoiler
+/// handle position (adding one would be a protocol change, out of scope
+/// for this milestone), so this widget's position is purely local — it
+/// can't mirror an in-sim spoiler change the way the throttle lever mirrors
+/// throttlePercent.
+class _SpeedbrakeLever extends StatefulWidget {
+  const _SpeedbrakeLever({required this.onStep});
+
+  /// Called with the number of detents moved: positive for SPOILERS_INC
+  /// taps, negative for SPOILERS_DEC taps.
+  final ValueChanged<int> onStep;
+
+  @override
+  State<_SpeedbrakeLever> createState() => _SpeedbrakeLeverState();
+}
+
+class _SpeedbrakeLeverState extends State<_SpeedbrakeLever> {
+  static const _detentMax = 2; // detents 0 (retracted) .. 2 (full deploy)
+  static const _height = 160.0;
+  static const _knobHeight = 32.0;
+
+  double _dragValue = 0; // fractional position while dragging, 0.._detentMax
+  int _detent = 0;
+
+  void _onDragStart(DragStartDetails details) {
+    _dragValue = _detent.toDouble();
+  }
+
+  void _onDragUpdate(DragUpdateDetails details) {
+    setState(() {
+      _dragValue = (_dragValue - details.delta.dy / (_height / _detentMax))
+          .clamp(0.0, _detentMax.toDouble());
+    });
+    final newDetent = _dragValue.round();
+    if (newDetent != _detent) {
+      widget.onStep(newDetent - _detent);
+      _detent = newDetent;
+    }
+  }
+
+  void _onDragEnd(DragEndDetails details) {
+    setState(() => _dragValue = _detent.toDouble()); // snap knob to the detent
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return GestureDetector(
+      onVerticalDragStart: _onDragStart,
+      onVerticalDragUpdate: _onDragUpdate,
+      onVerticalDragEnd: _onDragEnd,
+      child: Container(
+        width: 56,
+        height: _height,
+        decoration: BoxDecoration(
+          color: scheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            const Positioned(
+                top: 6, child: Text('SPD', style: TextStyle(fontSize: 11))),
+            const Positioned(
+              right: 4,
+              top: 24,
+              bottom: 8,
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text('2', style: TextStyle(fontSize: 10)),
+                  Text('1', style: TextStyle(fontSize: 10)),
+                  Text('0', style: TextStyle(fontSize: 10)),
+                ],
+              ),
+            ),
+            Align(
+              // y: -1 = top (full deploy), 1 = bottom (retracted).
+              alignment: Alignment(0, 1 - (_dragValue / _detentMax) * 2),
+              child: Container(
+                width: 40,
+                height: _knobHeight,
+                margin: const EdgeInsets.symmetric(horizontal: 4),
+                decoration: BoxDecoration(
+                  color: scheme.primary,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Toe brake: tap-and-hold, not a slider. AXIS_LEFT_BRAKE_SET/
+/// AXIS_RIGHT_BRAKE_SET are documented as non-linear and asymmetric to each
+/// other, so there's no usable proportional "brake X%" — this only ever
+/// sends full-apply on press and full-release on lift. Note: if the sim's
+/// parking brake is engaged, holding this may show no visible effect —
+/// that's the parking-brake interlock, not a bug here.
+class _ToeBrake extends StatefulWidget {
+  const _ToeBrake({required this.onPressedChanged});
+
+  final ValueChanged<bool> onPressedChanged;
+
+  @override
+  State<_ToeBrake> createState() => _ToeBrakeState();
+}
+
+class _ToeBrakeState extends State<_ToeBrake> {
+  bool _pressed = false;
+
+  void _setPressed(bool pressed) {
+    if (_pressed == pressed) return;
+    setState(() => _pressed = pressed);
+    widget.onPressedChanged(pressed);
+  }
+
+  @override
+  void dispose() {
+    // Backgrounding/navigating away mid-hold doesn't fire onTapCancel — send
+    // the release so the server doesn't hold the brake applied forever.
+    if (_pressed) widget.onPressedChanged(false);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return GestureDetector(
+      onTapDown: (_) => _setPressed(true),
+      onTapUp: (_) => _setPressed(false),
+      onTapCancel: () => _setPressed(false),
+      child: Container(
+        width: 72,
+        height: 72,
+        decoration: BoxDecoration(
+          color: _pressed ? scheme.error : scheme.surfaceContainerHighest,
+          shape: BoxShape.circle,
+        ),
+        alignment: Alignment.center,
+        child: Text('BRK',
+            style:
+                TextStyle(color: _pressed ? scheme.onError : scheme.onSurface)),
+      ),
     );
   }
 }

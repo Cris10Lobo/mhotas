@@ -22,6 +22,12 @@ const (
 	buttonGear         control.ButtonID = 1
 	buttonParkingBrake control.ButtonID = 2
 	buttonPause        control.ButtonID = 3
+	buttonFlapIncr     control.ButtonID = 4
+	buttonFlapDecr     control.ButtonID = 5
+	buttonToeBrake     control.ButtonID = 6
+	buttonSpoilerIncr  control.ButtonID = 7
+	buttonSpoilerDecr  control.ButtonID = 8
+	buttonSpoilerArm   control.ButtonID = 9
 )
 
 type Backend struct {
@@ -39,6 +45,23 @@ type Backend struct {
 	// on that assumption holding.
 	reverseArmedMu sync.Mutex
 	reverseArmed   bool
+
+	// spoilerArmed tracks whether the spoiler ARM button has been toggled
+	// on, the same locally-tracked-state pattern as reverseArmed above.
+	// Unlike reverseArmed, there's no telemetry readback to correct against
+	// here (no spoilersArmed field exists yet — that would be a protocol
+	// change, out of scope for this milestone) and SPOILERS_ARM_SET always
+	// takes an explicit value rather than toggling, so this is purely this
+	// button's own on/off memory, not a mirror of the sim's real state.
+	//
+	// ponytail: this can drift from the app's own independent copy of the
+	// same bool (control_screen.dart's _speedbrakeArmed) — a server restart,
+	// an app restart, or a dropped 3x-redundant BUTTON packet leaves one
+	// side's guess wrong with nothing to reconcile it. Add spoilersArmed to
+	// TELEMETRY (matching parkingBrakeSet/paused's readback pattern) if this
+	// bites in practice.
+	spoilerArmedMu sync.Mutex
+	spoilerArmed   bool
 }
 
 // New connects to MSFS2024 in the background (auto-reconnecting if the
@@ -79,19 +102,43 @@ func (b *Backend) SetAxis(axis control.AxisID, value float64) error {
 }
 
 func (b *Backend) SetButton(id control.ButtonID, pressed bool) error {
+	// Toe brake is momentary (apply while held, release on lift), unlike
+	// gear/parking brake/pause which are all press-only toggles — so it
+	// needs the release edge and must run before the !pressed early return.
+	if id == buttonToeBrake {
+		return b.client.SetToeBrakes(pressed)
+	}
 	if !pressed {
-		return nil // gear/parking brake/pause all act on press only
+		return nil // gear/parking brake/pause/flaps/spoiler buttons all act on press only
 	}
 	switch id {
 	case buttonGear:
 		return b.client.ToggleGear()
 	case buttonParkingBrake:
 		return b.client.ToggleParkingBrake()
+	case buttonFlapIncr:
+		return b.client.IncrFlaps()
+	case buttonFlapDecr:
+		return b.client.DecrFlaps()
 	case buttonPause:
 		// PAUSE_SET needs an explicit target, not a toggle (see
 		// simlink.Client.SetPause) — flip whatever SimConnect's own Pause
 		// event last reported, not a locally-tracked guess.
 		return b.client.SetPause(!b.client.Paused())
+	case buttonSpoilerIncr:
+		return b.client.IncrSpoilers()
+	case buttonSpoilerDecr:
+		return b.client.DecrSpoilers()
+	case buttonSpoilerArm:
+		// SPOILERS_ARM_SET takes an explicit value, not a toggle (see
+		// simlink.Client.SetSpoilersArmed) — but unlike pause there's no
+		// telemetry readback to flip against, so this button toggles its
+		// own locally-tracked state instead.
+		b.spoilerArmedMu.Lock()
+		b.spoilerArmed = !b.spoilerArmed
+		armed := b.spoilerArmed
+		b.spoilerArmedMu.Unlock()
+		return b.client.SetSpoilersArmed(armed)
 	default:
 		return fmt.Errorf("simconnect: unknown button %v", id)
 	}

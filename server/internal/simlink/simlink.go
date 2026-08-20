@@ -21,14 +21,21 @@ import (
 
 // Client event IDs: arbitrary but must be unique within a connection.
 const (
-	eventAxisElevator  uint32 = 1
-	eventAxisAileron   uint32 = 2
-	eventAxisRudder    uint32 = 3
-	eventGearToggle    uint32 = 4
-	eventParkingBrake  uint32 = 5
-	eventPauseSet      uint32 = 6
-	eventThrottleEx1   uint32 = 7
-	eventReverseToggle uint32 = 8
+	eventAxisElevator   uint32 = 1
+	eventAxisAileron    uint32 = 2
+	eventAxisRudder     uint32 = 3
+	eventGearToggle     uint32 = 4
+	eventParkingBrake   uint32 = 5
+	eventPauseSet       uint32 = 6
+	eventThrottleEx1    uint32 = 7
+	eventReverseToggle  uint32 = 8
+	eventFlapsIncr      uint32 = 9
+	eventFlapsDecr      uint32 = 10
+	eventAxisLeftBrake  uint32 = 11
+	eventAxisRightBrake uint32 = 12
+	eventSpoilersInc    uint32 = 13
+	eventSpoilersDec    uint32 = 14
+	eventSpoilersArmSet uint32 = 15
 
 	notificationGroup uint32 = 1
 
@@ -63,6 +70,12 @@ type aircraftStateData struct {
 	GearPositionPercent    int32
 	ThrottleLeverPercent   int32
 	ParkingBrakeSet        int32
+	// The 4 fields below are continuous simvars SimConnect reports as
+	// doubles, unlike the naturally-integer index/percent fields above.
+	AirspeedKnots    float64
+	AltitudeFeet     float64
+	HeadingDegrees   float64
+	VerticalSpeedFpm float64
 }
 
 type AircraftState struct {
@@ -88,6 +101,16 @@ type AircraftState struct {
 	// the brake is actually set rather than assuming it never changes
 	// outside a button tap. Not yet confirmed against a live sim.
 	ParkingBrakeSet int32
+	// AirspeedKnots is AIRSPEED INDICATED, knots. Feeds a configurable
+	// status tile rather than any control path. Not yet confirmed against
+	// a live sim.
+	AirspeedKnots float64
+	// AltitudeFeet is INDICATED ALTITUDE, feet.
+	AltitudeFeet float64
+	// HeadingDegrees is PLANE HEADING DEGREES MAGNETIC, degrees.
+	HeadingDegrees float64
+	// VerticalSpeedFpm is VERTICAL SPEED, feet/minute.
+	VerticalSpeedFpm float64
 }
 
 // LatestState returns the most recent aircraft-state reading, or false if
@@ -167,11 +190,21 @@ func setupEvents(client engine.Client) {
 	client.MapClientEventToSimEvent(eventPauseSet, "PAUSE_SET")
 	client.MapClientEventToSimEvent(eventThrottleEx1, "THROTTLE_AXIS_SET_EX1")
 	client.MapClientEventToSimEvent(eventReverseToggle, "THROTTLE_REVERSE_THRUST_TOGGLE")
+	client.MapClientEventToSimEvent(eventFlapsIncr, "FLAPS_INCR")
+	client.MapClientEventToSimEvent(eventFlapsDecr, "FLAPS_DECR")
+	client.MapClientEventToSimEvent(eventAxisLeftBrake, "AXIS_LEFT_BRAKE_SET")
+	client.MapClientEventToSimEvent(eventAxisRightBrake, "AXIS_RIGHT_BRAKE_SET")
+	client.MapClientEventToSimEvent(eventSpoilersInc, "SPOILERS_INC")
+	client.MapClientEventToSimEvent(eventSpoilersDec, "SPOILERS_DEC")
+	client.MapClientEventToSimEvent(eventSpoilersArmSet, "SPOILERS_ARM_SET")
 
 	for _, id := range []uint32{
 		eventAxisElevator, eventAxisAileron, eventAxisRudder,
 		eventGearToggle, eventParkingBrake, eventPauseSet,
 		eventThrottleEx1, eventReverseToggle,
+		eventFlapsIncr, eventFlapsDecr,
+		eventAxisLeftBrake, eventAxisRightBrake,
+		eventSpoilersInc, eventSpoilersDec, eventSpoilersArmSet,
 	} {
 		client.AddClientEventToNotificationGroup(notificationGroup, id, false)
 	}
@@ -186,6 +219,10 @@ func setupTelemetryRead(client engine.Client) {
 	client.AddToDataDefinition(defAircraftState, "GEAR POSITION", "percent", types.SIMCONNECT_DATATYPE_INT32, 0, 2)
 	client.AddToDataDefinition(defAircraftState, "GENERAL ENG THROTTLE LEVER POSITION:1", "percent", types.SIMCONNECT_DATATYPE_INT32, 0, 3)
 	client.AddToDataDefinition(defAircraftState, "BRAKE PARKING POSITION", "bool", types.SIMCONNECT_DATATYPE_INT32, 0, 4)
+	client.AddToDataDefinition(defAircraftState, "AIRSPEED INDICATED", "knots", types.SIMCONNECT_DATATYPE_FLOAT64, 0, 5)
+	client.AddToDataDefinition(defAircraftState, "INDICATED ALTITUDE", "feet", types.SIMCONNECT_DATATYPE_FLOAT64, 0, 6)
+	client.AddToDataDefinition(defAircraftState, "PLANE HEADING DEGREES MAGNETIC", "degrees", types.SIMCONNECT_DATATYPE_FLOAT64, 0, 7)
+	client.AddToDataDefinition(defAircraftState, "VERTICAL SPEED", "feet/minute", types.SIMCONNECT_DATATYPE_FLOAT64, 0, 8)
 
 	client.RequestDataOnSimObject(
 		reqAircraftState, defAircraftState,
@@ -220,6 +257,10 @@ func (c *Client) watchTelemetry(messages <-chan engine.Message) {
 			GearPositionPercent:    as.GearPositionPercent,
 			ThrottleLeverPercent:   as.ThrottleLeverPercent,
 			ParkingBrakeSet:        as.ParkingBrakeSet,
+			AirspeedKnots:          as.AirspeedKnots,
+			AltitudeFeet:           as.AltitudeFeet,
+			HeadingDegrees:         as.HeadingDegrees,
+			VerticalSpeedFpm:       as.VerticalSpeedFpm,
 		})
 	}
 }
@@ -280,11 +321,40 @@ func (c *Client) ToggleReverseThrust() error { return c.transmit(eventReverseTog
 // SetRudder sends a raw AXIS_RUDDER_SET value, range -AxisRange..AxisRange.
 func (c *Client) SetRudder(raw int32) error { return c.transmit(eventAxisRudder, uint32(raw)) }
 
+// SetToeBrakes drives AXIS_LEFT_BRAKE_SET/AXIS_RIGHT_BRAKE_SET to full
+// (applied) or fully released. Not a proportional control: both axes are
+// documented as non-linear and asymmetric to each other, so there's no
+// usable "brake X%" mapping — this only ever asks for max or nothing.
+// Like AXIS_THROTTLE_SET (see throttle.go), the raw range is signed
+// -AxisRange..AxisRange with 0 at the MIDPOINT, not the released end — 0
+// leaves the brakes roughly half-applied, so a full release must send
+// -AxisRange, not 0.
+func (c *Client) SetToeBrakes(applied bool) error {
+	raw := int32(-AxisRange)
+	if applied {
+		raw = AxisRange
+	}
+	if err := c.transmit(eventAxisLeftBrake, uint32(raw)); err != nil {
+		return err
+	}
+	return c.transmit(eventAxisRightBrake, uint32(raw))
+}
+
 // ToggleGear fires GEAR_TOGGLE.
 func (c *Client) ToggleGear() error { return c.transmit(eventGearToggle, 0) }
 
 // ToggleParkingBrake fires PARKING_BRAKES.
 func (c *Client) ToggleParkingBrake() error { return c.transmit(eventParkingBrake, 0) }
+
+// IncrFlaps fires FLAPS_INCR, stepping the flap handle out one detent.
+// There is no SimConnect event to set an exact flap handle index —
+// FLAPS_SET only takes a 0..16383 "closest increment" value, an
+// approximation rejected in favor of the same discrete per-detent taps a
+// real flap handle notch requires.
+func (c *Client) IncrFlaps() error { return c.transmit(eventFlapsIncr, 0) }
+
+// DecrFlaps fires FLAPS_DECR, stepping the flap handle in one detent.
+func (c *Client) DecrFlaps() error { return c.transmit(eventFlapsDecr, 0) }
 
 // SetPause fires PAUSE_SET with an explicit target (1 = pause, 0 = resume),
 // so the pilot can pause the sim from the phone (e.g. before setting it
@@ -302,6 +372,29 @@ func (c *Client) SetPause(paused bool) error {
 		data = 1
 	}
 	return c.transmit(eventPauseSet, data)
+}
+
+// IncrSpoilers fires SPOILERS_INC. Experimental (milestone 14): no exact-
+// detent "set spoiler position" event exists in SimConnect, so, same as
+// flaps, deploy/retract is step-based rather than absolute — confirm this
+// gives usable resolution once tested live.
+func (c *Client) IncrSpoilers() error { return c.transmit(eventSpoilersInc, 0) }
+
+// DecrSpoilers fires SPOILERS_DEC. See IncrSpoilers.
+func (c *Client) DecrSpoilers() error { return c.transmit(eventSpoilersDec, 0) }
+
+// SetSpoilersArmed fires SPOILERS_ARM_SET with an explicit target (1 =
+// armed, 0 = disarmed). Deliberately not SPOILERS_ARM_TOGGLE: multiple
+// independent community/DevSupport reports describe it arming successfully
+// but failing to disarm — the same toggle-unreliability class as
+// PAUSE_TOGGLE (see SetPause) — so this uses the explicit-value SET instead.
+// Experimental: not yet confirmed against a live sim.
+func (c *Client) SetSpoilersArmed(armed bool) error {
+	var data uint32
+	if armed {
+		data = 1
+	}
+	return c.transmit(eventSpoilersArmSet, data)
 }
 
 func (c *Client) Close() error {
