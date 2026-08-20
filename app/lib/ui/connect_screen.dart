@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -31,6 +33,15 @@ class _ConnectScreenState extends ConsumerState<ConnectScreen> {
   // dispose() can close it if the user navigates away while still
   // "connecting", instead of leaking a listener closing over this widget.
   ProviderSubscription<AsyncValue<ConnectionStatus>>? _statusSub;
+
+  // HELLO_ACK on a reachable server arrives near-instantly (same LAN, UDP
+  // round trip) — this is generous slack for that, not a real network
+  // timeout budget. Without it, an unreachable address (wrong QR-scanned
+  // IP, firewall, server not running) leaves _statusSub waiting forever
+  // with the button stuck on "Connecting..." and no feedback at all —
+  // reported live, this is that fix.
+  static const _connectTimeout = Duration(seconds: 6);
+  Timer? _timeoutTimer;
 
   @override
   void initState() {
@@ -70,13 +81,13 @@ class _ConnectScreenState extends ConsumerState<ConnectScreen> {
       final status = next.valueOrNull;
       if (status == null) return;
       if (status == ConnectionStatus.connected) {
-        _closeStatusSub();
+        _stopWaiting();
         if (!mounted) return;
         Navigator.of(context).pushReplacement(
           MaterialPageRoute(builder: (_) => const ControlScreen()),
         );
       } else if (status == ConnectionStatus.versionMismatch) {
-        _closeStatusSub();
+        _stopWaiting();
         if (!mounted) return;
         setState(() {
           _connecting = false;
@@ -84,7 +95,7 @@ class _ConnectScreenState extends ConsumerState<ConnectScreen> {
               'Server protocol version mismatch — update the app or server';
         });
       } else if (status == ConnectionStatus.error) {
-        _closeStatusSub();
+        _stopWaiting();
         if (!mounted) return;
         setState(() {
           _connecting = false;
@@ -93,12 +104,26 @@ class _ConnectScreenState extends ConsumerState<ConnectScreen> {
       }
     });
 
+    _timeoutTimer?.cancel();
+    _timeoutTimer = Timer(_connectTimeout, () {
+      _stopWaiting();
+      if (!mounted) return;
+      setState(() {
+        _connecting = false;
+        _error =
+            'Timed out waiting for the server — check it\'s running and the '
+            'address is reachable from this phone';
+      });
+    });
+
     await client.connect(host, port);
   }
 
-  void _closeStatusSub() {
+  void _stopWaiting() {
     _statusSub?.close();
     _statusSub = null;
+    _timeoutTimer?.cancel();
+    _timeoutTimer = null;
   }
 
   Future<void> _scanAndConnect() async {
@@ -114,7 +139,7 @@ class _ConnectScreenState extends ConsumerState<ConnectScreen> {
 
   @override
   void dispose() {
-    _closeStatusSub();
+    _stopWaiting();
     _hostController.dispose();
     _portController.dispose();
     super.dispose();
