@@ -198,8 +198,8 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
                   alignment: Alignment.centerLeft,
                   child: Padding(
                     padding: const EdgeInsets.only(left: 16),
-                    child:
-                        _StatusTilesRow(kinds: _tileKinds, telemetry: telemetry),
+                    child: _StatusTilesRow(
+                        kinds: _tileKinds, telemetry: telemetry),
                   ),
                 ),
                 Expanded(
@@ -782,9 +782,7 @@ class _FlapLeverState extends State<_FlapLever> {
             Positioned(
               bottom: 4,
               child: Text(
-                widget.max == null
-                    ? '--/--'
-                    : '$displayIndex/${widget.max}',
+                widget.max == null ? '--/--' : '$displayIndex/${widget.max}',
                 style: const TextStyle(fontSize: 10),
               ),
             ),
@@ -998,8 +996,8 @@ class _BigButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final child = Text(label,
-        style: compact ? const TextStyle(fontSize: 11) : null);
+    final child =
+        Text(label, style: compact ? const TextStyle(fontSize: 11) : null);
     return SizedBox(
       width: compact ? 64 : 120,
       height: compact ? 36 : 56,
@@ -1162,8 +1160,8 @@ class _ToeBrakeState extends State<_ToeBrake> {
         ),
         alignment: Alignment.center,
         child: Text('BRK',
-            style: TextStyle(
-                color: _pressed ? scheme.onError : scheme.onSurface)),
+            style:
+                TextStyle(color: _pressed ? scheme.onError : scheme.onSurface)),
       ),
     );
   }
