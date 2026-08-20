@@ -177,15 +177,15 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
     final isPaused = telemetry?.paused ?? false;
 
     return Scaffold(
+      // No separate "mHOTAS" heading — the status text below already carries
+      // the name (see _ConnectionStatusText's own note on that), so a
+      // second static label next to it was pure redundancy on an already
+      // tight landscape app bar.
       appBar: AppBar(
-        title: const Text('mHOTAS'),
+        centerTitle:
+            false, // left — centerTitle otherwise defaults per-platform
+        title: _ConnectionStatusText(status: connectionStatus),
         actions: [
-          IconButton(
-            icon: Icon(isPaused ? Icons.play_arrow : Icons.pause),
-            tooltip: 'Pause',
-            color: isPaused ? Theme.of(context).colorScheme.primary : null,
-            onPressed: _togglePause,
-          ),
           TextButton.icon(
             icon: const Icon(Icons.center_focus_strong),
             label: const Text('Calibrate'),
@@ -210,12 +210,21 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
             tooltip: 'Settings',
             onPressed: _openSettings,
           ),
-          Padding(
-            padding: const EdgeInsets.only(right: 12, left: 4),
-            child:
-                Center(child: _ConnectionStatusText(status: connectionStatus)),
-          ),
         ],
+        // Pause centered across the whole app bar (not just the leftover
+        // space between title/actions, which flexibleSpace's full-width
+        // Stack sidesteps) — called out by itself since it's the one action
+        // an in-flight tap can't afford to miss among the others.
+        flexibleSpace: SafeArea(
+          child: Center(
+            child: IconButton(
+              icon: Icon(isPaused ? Icons.play_arrow : Icons.pause),
+              tooltip: 'Pause',
+              color: isPaused ? Theme.of(context).colorScheme.primary : null,
+              onPressed: _togglePause,
+            ),
+          ),
+        ),
       ),
       body: SafeArea(
         child: Stack(
@@ -252,18 +261,21 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
                         padding: const EdgeInsets.only(right: 8),
                         child: _Movable(
                           id: 'speedbrake',
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              _BigButton(
-                                label: 'ARM',
-                                onTap: _toggleSpeedbrakeArm,
-                                active: _speedbrakeArmed,
-                                compact: true,
-                              ),
-                              const SizedBox(height: 8),
-                              _SpeedbrakeLever(onStep: _stepSpeedbrake),
-                            ],
+                          child: _ControlLabel(
+                            label: 'SPEEDBRAKE',
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                _BigButton(
+                                  label: 'ARM',
+                                  onTap: _toggleSpeedbrakeArm,
+                                  active: _speedbrakeArmed,
+                                  compact: true,
+                                ),
+                                const SizedBox(height: 8),
+                                _SpeedbrakeLever(onStep: _stepSpeedbrake),
+                              ],
+                            ),
                           ),
                         ),
                       ),
@@ -282,9 +294,12 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
                         padding: const EdgeInsets.only(right: 8),
                         child: _Movable(
                           id: 'toeBrake',
-                          child: _ToeBrake(
-                            onPressedChanged: (pressed) =>
-                                _sendButton(ButtonIds.toeBrake, pressed),
+                          child: _ControlLabel(
+                            label: 'TOE BRAKE',
+                            child: _ToeBrake(
+                              onPressedChanged: (pressed) =>
+                                  _sendButton(ButtonIds.toeBrake, pressed),
+                            ),
                           ),
                         ),
                       ),
@@ -292,9 +307,12 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
                         padding: const EdgeInsets.only(right: 8),
                         child: _Movable(
                           id: 'parkingBrake',
-                          child: _ParkingBrakeButton(
-                            active: telemetry?.parkingBrakeSet ?? false,
-                            onTap: () => _tapButton(ButtonIds.parkingBrake),
+                          child: _ControlLabel(
+                            label: 'PARK BRAKE',
+                            child: _ParkingBrakeButton(
+                              active: telemetry?.parkingBrakeSet ?? false,
+                              onTap: () => _tapButton(ButtonIds.parkingBrake),
+                            ),
                           ),
                         ),
                       ),
@@ -302,19 +320,25 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
                         padding: const EdgeInsets.only(right: 8),
                         child: _Movable(
                           id: 'gear',
-                          child: _GearToggle(
-                            position: telemetry?.gearPosition,
-                            onTap: () => _tapButton(ButtonIds.gear),
+                          child: _ControlLabel(
+                            label: 'GEAR',
+                            child: _GearToggle(
+                              position: telemetry?.gearPosition,
+                              onTap: () => _tapButton(ButtonIds.gear),
+                            ),
                           ),
                         ),
                       ),
                       _Movable(
                         id: 'throttle',
-                        child: _ThrottleLever(
-                          onChanged: (v) => ref
-                              .read(sliderAxisProvider.notifier)
-                              .setThrottle(v),
-                          synced: telemetry?.throttlePercent,
+                        child: _ControlLabel(
+                          label: 'THROTTLE',
+                          child: _ThrottleLever(
+                            onChanged: (v) => ref
+                                .read(sliderAxisProvider.notifier)
+                                .setThrottle(v),
+                            synced: telemetry?.throttlePercent,
+                          ),
                         ),
                       ),
                     ],
@@ -327,9 +351,13 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
               bottom: 16,
               child: _Movable(
                 id: 'rudder',
-                child: _RudderStick(
-                  onChanged: (v) =>
-                      ref.read(sliderAxisProvider.notifier).setRudder(v),
+                child: _ControlLabel(
+                  label: 'RUDDER',
+                  horizontal: true,
+                  child: _RudderStick(
+                    onChanged: (v) =>
+                        ref.read(sliderAxisProvider.notifier).setRudder(v),
+                  ),
                 ),
               ),
             ),
@@ -394,9 +422,49 @@ class _Movable extends ConsumerWidget {
   }
 }
 
-/// Top-right corner status text, per the wireframe (distinct from the AppBar
-/// title, which stays plain "mHOTAS" — the wireframe repeats the name here
-/// alongside the color-coded state on purpose, not a duplication mistake).
+/// Small caption above a control, positioned to match the wireframe's own
+/// convention: centered above a compact/vertical control (a lever, a
+/// circular button), left-aligned above a wide horizontal one (the rudder
+/// bar) rather than centered over mostly-empty space either side. Kept
+/// small and low-contrast on purpose — a glanceable name for the control,
+/// not something competing with the control itself for attention.
+class _ControlLabel extends StatelessWidget {
+  const _ControlLabel({
+    required this.label,
+    required this.child,
+    this.horizontal = false,
+  });
+
+  final String label;
+  final Widget child;
+  final bool horizontal;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment:
+          horizontal ? CrossAxisAlignment.start : CrossAxisAlignment.center,
+      children: [
+        Padding(
+          padding: const EdgeInsets.only(bottom: 2),
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 10,
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ),
+        child,
+      ],
+    );
+  }
+}
+
+/// AppBar title — used as the title itself, not a separate corner
+/// annotation, per the wireframe: the app's name lives in the color-coded
+/// connection state, not as a second static "mHOTAS" heading next to it.
 class _ConnectionStatusText extends StatelessWidget {
   const _ConnectionStatusText({required this.status});
 
@@ -1027,7 +1095,6 @@ class _RudderStickState extends State<_RudderStick>
         child: Stack(
           alignment: Alignment.center,
           children: [
-            const Text('RUD'),
             Align(
               alignment: Alignment(_value, 0),
               child: Container(
