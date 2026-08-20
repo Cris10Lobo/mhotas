@@ -9,7 +9,9 @@ import '../network/udp_client.dart';
 import '../sensors/attitude.dart';
 import '../state/connection.dart';
 import '../state/slider_axis.dart';
+import '../state/status_tiles.dart';
 import '../state/telemetry.dart';
+import 'settings_screen.dart';
 
 /// Button IDs used by this screen's MVP button set — must match whatever
 /// the server config maps them to (server/internal/config).
@@ -36,6 +38,7 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
   StreamSubscription<Attitude>? _attitudeSub;
   Timer? _sendTimer;
   int _buttonEventId = 0;
+  List<StatusTileKind> _tileKinds = defaultStatusTileKinds;
 
   @override
   void initState() {
@@ -47,6 +50,20 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
     });
     _sendTimer = Timer.periodic(
         const Duration(milliseconds: 33), (_) => _sendAxis()); // ~30Hz
+    _loadTileKinds();
+  }
+
+  Future<void> _loadTileKinds() async {
+    final kinds = await loadStatusTileKinds();
+    if (!mounted) return;
+    setState(() => _tileKinds = kinds);
+  }
+
+  Future<void> _openSettings() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const SettingsScreen()),
+    );
+    _loadTileKinds(); // pick up any tile choices changed while there
   }
 
   void _sendAxis() {
@@ -112,6 +129,11 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
             tooltip: 'Recenter tilt',
             onPressed: _attitudeStream.recenter,
           ),
+          IconButton(
+            icon: const Icon(Icons.settings),
+            tooltip: 'Settings',
+            onPressed: _openSettings,
+          ),
         ],
       ),
       body: SafeArea(
@@ -166,6 +188,11 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
                 onChanged: (v) =>
                     ref.read(sliderAxisProvider.notifier).setRudder(v),
               ),
+            ),
+            Positioned(
+              left: 16,
+              top: 16,
+              child: _StatusTilesRow(kinds: _tileKinds, telemetry: telemetry),
             ),
           ],
         ),
@@ -225,6 +252,59 @@ class _TelemetryRow extends StatelessWidget {
               ? 'FLAP --/--'
               : 'FLAP ${t.flapHandleIndex}/${t.flapHandleIndexMax}'),
           Text(_gearLabel),
+        ],
+      ),
+    );
+  }
+}
+
+/// 4 configurable status tiles (default: airspeed/altitude/heading/vertical
+/// speed) — which simvar each one shows is picked in SettingsScreen and
+/// persisted via status_tiles.dart.
+class _StatusTilesRow extends StatelessWidget {
+  const _StatusTilesRow({required this.kinds, required this.telemetry});
+
+  final List<StatusTileKind> kinds;
+  final proto.Telemetry? telemetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (final kind in kinds)
+          Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: _StatusTile(kind: kind, telemetry: telemetry),
+          ),
+      ],
+    );
+  }
+}
+
+class _StatusTile extends StatelessWidget {
+  const _StatusTile({required this.kind, required this.telemetry});
+
+  final StatusTileKind kind;
+  final proto.Telemetry? telemetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      width: 64,
+      height: 48,
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Text(kind.label, style: const TextStyle(fontSize: 10)),
+          Text(kind.valueOf(telemetry),
+              style:
+                  const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
         ],
       ),
     );

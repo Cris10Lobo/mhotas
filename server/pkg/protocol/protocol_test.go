@@ -97,6 +97,10 @@ func TestTelemetryRoundTrip(t *testing.T) {
 		ParkingBrakeSet:    true,
 		ThrottlePercent:    -0.5,
 		Paused:             true,
+		AirspeedKnots:      120.5,
+		AltitudeFeet:       3500,
+		HeadingDegrees:     270,
+		VerticalSpeedFpm:   -600,
 	}
 	buf := EncodeTelemetry(3, want)
 	got, err := DecodeTelemetry(buf)
