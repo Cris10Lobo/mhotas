@@ -27,5 +27,5 @@ app/pubspec.lock
 .idea/
 .DS_Store
 
-# Internal tracking doc, not part of the public repo
 docs/milestones.md
+docs/*.png
