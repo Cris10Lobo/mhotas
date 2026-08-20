@@ -29,6 +29,8 @@ const (
 	eventPauseSet      uint32 = 6
 	eventThrottleEx1   uint32 = 7
 	eventReverseToggle uint32 = 8
+	eventFlapsIncr     uint32 = 9
+	eventFlapsDecr     uint32 = 10
 
 	notificationGroup uint32 = 1
 
@@ -183,11 +185,14 @@ func setupEvents(client engine.Client) {
 	client.MapClientEventToSimEvent(eventPauseSet, "PAUSE_SET")
 	client.MapClientEventToSimEvent(eventThrottleEx1, "THROTTLE_AXIS_SET_EX1")
 	client.MapClientEventToSimEvent(eventReverseToggle, "THROTTLE_REVERSE_THRUST_TOGGLE")
+	client.MapClientEventToSimEvent(eventFlapsIncr, "FLAPS_INCR")
+	client.MapClientEventToSimEvent(eventFlapsDecr, "FLAPS_DECR")
 
 	for _, id := range []uint32{
 		eventAxisElevator, eventAxisAileron, eventAxisRudder,
 		eventGearToggle, eventParkingBrake, eventPauseSet,
 		eventThrottleEx1, eventReverseToggle,
+		eventFlapsIncr, eventFlapsDecr,
 	} {
 		client.AddClientEventToNotificationGroup(notificationGroup, id, false)
 	}
@@ -309,6 +314,16 @@ func (c *Client) ToggleGear() error { return c.transmit(eventGearToggle, 0) }
 
 // ToggleParkingBrake fires PARKING_BRAKES.
 func (c *Client) ToggleParkingBrake() error { return c.transmit(eventParkingBrake, 0) }
+
+// IncrFlaps fires FLAPS_INCR, stepping the flap handle out one detent.
+// There is no SimConnect event to set an exact flap handle index —
+// FLAPS_SET only takes a 0..16383 "closest increment" value, an
+// approximation rejected in favor of the same discrete per-detent taps a
+// real flap handle notch requires.
+func (c *Client) IncrFlaps() error { return c.transmit(eventFlapsIncr, 0) }
+
+// DecrFlaps fires FLAPS_DECR, stepping the flap handle in one detent.
+func (c *Client) DecrFlaps() error { return c.transmit(eventFlapsDecr, 0) }
 
 // SetPause fires PAUSE_SET with an explicit target (1 = pause, 0 = resume),
 // so the pilot can pause the sim from the phone (e.g. before setting it

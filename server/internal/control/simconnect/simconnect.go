@@ -22,6 +22,8 @@ const (
 	buttonGear         control.ButtonID = 1
 	buttonParkingBrake control.ButtonID = 2
 	buttonPause        control.ButtonID = 3
+	buttonFlapIncr     control.ButtonID = 4
+	buttonFlapDecr     control.ButtonID = 5
 )
 
 type Backend struct {
@@ -80,13 +82,17 @@ func (b *Backend) SetAxis(axis control.AxisID, value float64) error {
 
 func (b *Backend) SetButton(id control.ButtonID, pressed bool) error {
 	if !pressed {
-		return nil // gear/parking brake/pause all act on press only
+		return nil // gear/parking brake/pause/flaps all act on press only
 	}
 	switch id {
 	case buttonGear:
 		return b.client.ToggleGear()
 	case buttonParkingBrake:
 		return b.client.ToggleParkingBrake()
+	case buttonFlapIncr:
+		return b.client.IncrFlaps()
+	case buttonFlapDecr:
+		return b.client.DecrFlaps()
 	case buttonPause:
 		// PAUSE_SET needs an explicit target, not a toggle (see
 		// simlink.Client.SetPause) — flip whatever SimConnect's own Pause

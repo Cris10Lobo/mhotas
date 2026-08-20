@@ -21,6 +21,8 @@ class ButtonIds {
   static const int gear = 1;
   static const int parkingBrake = 2;
   static const int pause = 3;
+  static const int flapIncr = 4;
+  static const int flapDecr = 5;
 }
 
 /// The primary flying screen, styled after X-Plane Mobile: tilt the phone
@@ -99,6 +101,17 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
   }
 
   void _togglePause() => _tapButton(ButtonIds.pause);
+
+  // There's no SimConnect event to set an exact flap handle index — only
+  // FLAPS_INCR/FLAPS_DECR, one detent per event — so [steps] detents of
+  // difference becomes [steps] sequential taps, awaited one at a time so
+  // each lands as its own press/release BUTTON pair.
+  Future<void> _stepFlaps(int steps) async {
+    final id = steps > 0 ? ButtonIds.flapIncr : ButtonIds.flapDecr;
+    for (var i = 0; i < steps.abs(); i++) {
+      await _tapButton(id);
+    }
+  }
 
   @override
   void dispose() {
@@ -207,6 +220,15 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
               left: 16,
               top: 16,
               child: _StatusTilesRow(kinds: _tileKinds, telemetry: telemetry),
+            ),
+            Positioned(
+              right: 16,
+              bottom: 16,
+              child: _FlapLever(
+                onStep: (steps) => _stepFlaps(steps),
+                synced: telemetry?.flapHandleIndex,
+                max: telemetry?.flapHandleIndexMax,
+              ),
             ),
           ],
         ),
@@ -588,6 +610,130 @@ class _ThrottleLeverState extends State<_ThrottleLever>
                 margin: const EdgeInsets.symmetric(horizontal: 4),
                 decoration: BoxDecoration(
                   color: _value < 0 ? scheme.error : scheme.primary,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Flap lever: discrete detents 0..[max] (from TELEMETRY's
+/// flapHandleIndexMax), unlike the throttle's continuous drag — a real flap
+/// handle only has fixed notches, and SimConnect only exposes
+/// FLAPS_INCR/FLAPS_DECR (step one detent at a time), not a set-to-index
+/// event, so dragging to a new detent and releasing sends that many INCR
+/// or DECR BUTTON taps rather than one absolute value.
+///
+/// [synced] is the sim's actual current flap handle index (from
+/// TELEMETRY) — same don't-fight-the-sim mirroring _ThrottleLever uses:
+/// while not dragging, the lever shows [synced] instead of a stale local
+/// guess, so an in-sim flap change shows up here too.
+class _FlapLever extends StatefulWidget {
+  const _FlapLever(
+      {required this.onStep, required this.synced, required this.max});
+
+  /// Requests [steps] detents of movement: positive = FLAPS_INCR taps,
+  /// negative = FLAPS_DECR taps.
+  final ValueChanged<int> onStep;
+  final int? synced;
+  final int? max;
+
+  @override
+  State<_FlapLever> createState() => _FlapLeverState();
+}
+
+class _FlapLeverState extends State<_FlapLever> {
+  static const _height = 160.0;
+  static const _knobHeight = 32.0;
+
+  bool _dragging = false;
+  double _dragFraction = 0; // 0 (up/retracted) .. 1 (down/full flaps)
+  int? _pendingDetent;
+
+  // Same rationale as _ThrottleLever._localCommandGrace: telemetry only
+  // arrives ~1x/sec, so right after a tap the last known `synced` reading
+  // is still the pre-tap value for up to a second — without this guard the
+  // lever would visually snap back to the old detent and then jump forward
+  // once telemetry catches up.
+  DateTime _lastLocalCommandAt = DateTime.fromMillisecondsSinceEpoch(0);
+  static const _localCommandGrace = Duration(milliseconds: 1200);
+
+  int get _max => widget.max ?? 0;
+
+  double _fractionFor(int index) => _max == 0 ? 0 : index / _max;
+
+  void _onDragStart(DragStartDetails details) {
+    _dragging = true;
+    _dragFraction = _fractionFor(_pendingDetent ?? widget.synced ?? 0);
+  }
+
+  void _onDragUpdate(DragUpdateDetails details) {
+    setState(() {
+      _dragFraction =
+          (_dragFraction + details.delta.dy / _height).clamp(0.0, 1.0);
+    });
+  }
+
+  void _onDragEnd(DragEndDetails details) {
+    if (_max > 0) {
+      final target = (_dragFraction * _max).round().clamp(0, _max);
+      final current = widget.synced ?? _pendingDetent ?? 0;
+      final steps = target - current;
+      if (steps != 0) widget.onStep(steps);
+      _pendingDetent = target;
+      _lastLocalCommandAt = DateTime.now();
+    }
+    setState(() => _dragging = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final recentlyCommanded =
+        DateTime.now().difference(_lastLocalCommandAt) < _localCommandGrace;
+    final displayIndex =
+        recentlyCommanded ? (_pendingDetent ?? widget.synced) : widget.synced;
+    final fraction =
+        _dragging ? _dragFraction : _fractionFor(displayIndex ?? 0);
+
+    return GestureDetector(
+      onVerticalDragStart: _onDragStart,
+      onVerticalDragUpdate: _onDragUpdate,
+      onVerticalDragEnd: _onDragEnd,
+      child: Container(
+        width: 56,
+        height: _height,
+        decoration: BoxDecoration(
+          color: scheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            const Positioned(
+                top: 6, child: Text('FLAP', style: TextStyle(fontSize: 11))),
+            Positioned(
+              bottom: 4,
+              child: Text(
+                widget.max == null
+                    ? '--/--'
+                    : '${displayIndex ?? 0}/${widget.max}',
+                style: const TextStyle(fontSize: 10),
+              ),
+            ),
+            AnimatedAlign(
+              duration: const Duration(milliseconds: 200),
+              alignment: Alignment(0, fraction * 2 - 1),
+              child: Container(
+                width: 44,
+                height: _knobHeight,
+                margin: const EdgeInsets.symmetric(horizontal: 4),
+                decoration: BoxDecoration(
+                  color: scheme.primary,
                   borderRadius: BorderRadius.circular(8),
                 ),
               ),
