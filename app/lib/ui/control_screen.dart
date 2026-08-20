@@ -57,6 +57,10 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
   // brake buttons — there's nothing to read the real state back from; this
   // button just remembers its own last-toggled state, same as the server's
   // Backend.spoilerArmed.
+  //
+  // ponytail: this and the server's copy can drift (restart either side, or
+  // drop all 3 redundant BUTTON packets) with nothing to reconcile them —
+  // add a spoilersArmed TELEMETRY field if that turns out to matter live.
   bool _speedbrakeArmed = false;
 
   @override
@@ -190,6 +194,14 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
               children: [
                 _ConnectionBanner(status: connectionStatus),
                 _TelemetryRow(telemetry: telemetry),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Padding(
+                    padding: const EdgeInsets.only(left: 16),
+                    child:
+                        _StatusTilesRow(kinds: _tileKinds, telemetry: telemetry),
+                  ),
+                ),
                 Expanded(
                   child: Row(
                     children: [
@@ -216,6 +228,21 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
                             const SizedBox(height: 8),
                             _SpeedbrakeLever(onStep: _stepSpeedbrake),
                           ],
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: _FlapLever(
+                          onStep: (steps) => _stepFlaps(steps),
+                          synced: telemetry?.flapHandleIndex,
+                          max: telemetry?.flapHandleIndexMax,
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: _ToeBrake(
+                          onPressedChanged: (pressed) =>
+                              _sendButton(ButtonIds.toeBrake, pressed),
                         ),
                       ),
                       _ThrottleLever(
@@ -256,28 +283,6 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
               child: _RudderStick(
                 onChanged: (v) =>
                     ref.read(sliderAxisProvider.notifier).setRudder(v),
-              ),
-            ),
-            Positioned(
-              left: 16,
-              top: 16,
-              child: _StatusTilesRow(kinds: _tileKinds, telemetry: telemetry),
-            ),
-            Positioned(
-              right: 16,
-              bottom: 16,
-              child: _FlapLever(
-                onStep: (steps) => _stepFlaps(steps),
-                synced: telemetry?.flapHandleIndex,
-                max: telemetry?.flapHandleIndexMax,
-              ),
-            ),
-            Positioned(
-              right: 16,
-              top: 16,
-              child: _ToeBrake(
-                onPressedChanged: (pressed) =>
-                    _sendButton(ButtonIds.toeBrake, pressed),
               ),
             ),
           ],
@@ -716,9 +721,22 @@ class _FlapLeverState extends State<_FlapLever> {
 
   double _fractionFor(int index) => _max == 0 ? 0 : index / _max;
 
+  // Single source of truth for "what detent are we at right now" — used by
+  // drag-start (to seed the drag) and drag-end (to compute the step delta)
+  // alike, so both agree with what build() is showing. Using widget.synced
+  // directly in either of those (as opposed to this grace-guarded value)
+  // reintroduces the stale-telemetry race the grace window exists to avoid:
+  // a second drag within _localCommandGrace of the first would diff against
+  // the pre-tap synced value and double-send the already-taken steps.
+  int _currentDetent() {
+    final recentlyCommanded =
+        DateTime.now().difference(_lastLocalCommandAt) < _localCommandGrace;
+    return (recentlyCommanded ? _pendingDetent : null) ?? widget.synced ?? 0;
+  }
+
   void _onDragStart(DragStartDetails details) {
     _dragging = true;
-    _dragFraction = _fractionFor(_pendingDetent ?? widget.synced ?? 0);
+    _dragFraction = _fractionFor(_currentDetent());
   }
 
   void _onDragUpdate(DragUpdateDetails details) {
@@ -731,8 +749,7 @@ class _FlapLeverState extends State<_FlapLever> {
   void _onDragEnd(DragEndDetails details) {
     if (_max > 0) {
       final target = (_dragFraction * _max).round().clamp(0, _max);
-      final current = widget.synced ?? _pendingDetent ?? 0;
-      final steps = target - current;
+      final steps = target - _currentDetent();
       if (steps != 0) widget.onStep(steps);
       _pendingDetent = target;
       _lastLocalCommandAt = DateTime.now();
@@ -743,12 +760,8 @@ class _FlapLeverState extends State<_FlapLever> {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final recentlyCommanded =
-        DateTime.now().difference(_lastLocalCommandAt) < _localCommandGrace;
-    final displayIndex =
-        recentlyCommanded ? (_pendingDetent ?? widget.synced) : widget.synced;
-    final fraction =
-        _dragging ? _dragFraction : _fractionFor(displayIndex ?? 0);
+    final displayIndex = _currentDetent();
+    final fraction = _dragging ? _dragFraction : _fractionFor(displayIndex);
 
     return GestureDetector(
       onVerticalDragStart: _onDragStart,
@@ -771,7 +784,7 @@ class _FlapLeverState extends State<_FlapLever> {
               child: Text(
                 widget.max == null
                     ? '--/--'
-                    : '${displayIndex ?? 0}/${widget.max}',
+                    : '$displayIndex/${widget.max}',
                 style: const TextStyle(fontSize: 10),
               ),
             ),
@@ -1123,6 +1136,14 @@ class _ToeBrakeState extends State<_ToeBrake> {
     if (_pressed == pressed) return;
     setState(() => _pressed = pressed);
     widget.onPressedChanged(pressed);
+  }
+
+  @override
+  void dispose() {
+    // Backgrounding/navigating away mid-hold doesn't fire onTapCancel — send
+    // the release so the server doesn't hold the brake applied forever.
+    if (_pressed) widget.onPressedChanged(false);
+    super.dispose();
   }
 
   @override

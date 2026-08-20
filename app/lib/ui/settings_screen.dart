@@ -2,9 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../state/settings.dart';
-
 import '../state/status_tiles.dart';
 
+/// MVP-minimal by design: curve/dead-zone editing stays server-config-file-
+/// only (server/internal/config) until a later remote-settings-sync
 /// feature. Two things are configurable here: which simvar each
 /// control-screen status tile shows, and the manual joystick toggle (a
 /// choice about which on-screen control drives pitch/roll, not something

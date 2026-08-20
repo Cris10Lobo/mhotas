@@ -53,6 +53,13 @@ type Backend struct {
 	// change, out of scope for this milestone) and SPOILERS_ARM_SET always
 	// takes an explicit value rather than toggling, so this is purely this
 	// button's own on/off memory, not a mirror of the sim's real state.
+	//
+	// ponytail: this can drift from the app's own independent copy of the
+	// same bool (control_screen.dart's _speedbrakeArmed) — a server restart,
+	// an app restart, or a dropped 3x-redundant BUTTON packet leaves one
+	// side's guess wrong with nothing to reconcile it. Add spoilersArmed to
+	// TELEMETRY (matching parkingBrakeSet/paused's readback pattern) if this
+	// bites in practice.
 	spoilerArmedMu sync.Mutex
 	spoilerArmed   bool
 }

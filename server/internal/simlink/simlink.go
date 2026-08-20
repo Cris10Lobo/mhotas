@@ -322,18 +322,22 @@ func (c *Client) ToggleReverseThrust() error { return c.transmit(eventReverseTog
 func (c *Client) SetRudder(raw int32) error { return c.transmit(eventAxisRudder, uint32(raw)) }
 
 // SetToeBrakes drives AXIS_LEFT_BRAKE_SET/AXIS_RIGHT_BRAKE_SET to full
-// (applied) or zero (released). Not a proportional control: both axes are
+// (applied) or fully released. Not a proportional control: both axes are
 // documented as non-linear and asymmetric to each other, so there's no
 // usable "brake X%" mapping — this only ever asks for max or nothing.
+// Like AXIS_THROTTLE_SET (see throttle.go), the raw range is signed
+// -AxisRange..AxisRange with 0 at the MIDPOINT, not the released end — 0
+// leaves the brakes roughly half-applied, so a full release must send
+// -AxisRange, not 0.
 func (c *Client) SetToeBrakes(applied bool) error {
-	var raw uint32
+	raw := int32(-AxisRange)
 	if applied {
 		raw = AxisRange
 	}
-	if err := c.transmit(eventAxisLeftBrake, raw); err != nil {
+	if err := c.transmit(eventAxisLeftBrake, uint32(raw)); err != nil {
 		return err
 	}
-	return c.transmit(eventAxisRightBrake, raw)
+	return c.transmit(eventAxisRightBrake, uint32(raw))
 }
 
 // ToggleGear fires GEAR_TOGGLE.
