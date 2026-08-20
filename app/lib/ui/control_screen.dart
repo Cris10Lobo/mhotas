@@ -24,6 +24,9 @@ class ButtonIds {
   static const int flapIncr = 4;
   static const int flapDecr = 5;
   static const int toeBrake = 6;
+  static const int spoilerIncr = 7;
+  static const int spoilerDecr = 8;
+  static const int spoilerArm = 9;
 }
 
 /// The primary flying screen, styled after X-Plane Mobile: tilt the phone
@@ -48,6 +51,13 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
   Timer? _sendTimer;
   int _buttonEventId = 0;
   List<StatusTileKind> _tileKinds = defaultStatusTileKinds;
+
+  // No spoilersArmed TELEMETRY field exists yet (that would be a protocol
+  // change, out of scope for this milestone), so — unlike the pause/parking
+  // brake buttons — there's nothing to read the real state back from; this
+  // button just remembers its own last-toggled state, same as the server's
+  // Backend.spoilerArmed.
+  bool _speedbrakeArmed = false;
 
   @override
   void initState() {
@@ -114,6 +124,21 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
     }
   }
 
+  // One INCR/DECR tap per detent crossed, same discrete-step reasoning as
+  // the lever widget itself: SimConnect has no exact-detent "set spoiler
+  // position" event, only step events.
+  Future<void> _stepSpeedbrake(int delta) async {
+    final id = delta > 0 ? ButtonIds.spoilerIncr : ButtonIds.spoilerDecr;
+    for (var i = 0; i < delta.abs(); i++) {
+      await _tapButton(id);
+    }
+  }
+
+  void _toggleSpeedbrakeArm() {
+    setState(() => _speedbrakeArmed = !_speedbrakeArmed);
+    _tapButton(ButtonIds.spoilerArm);
+  }
+
   @override
   void dispose() {
     _sendTimer?.cancel();
@@ -175,6 +200,22 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
                                   onChanged: (v) =>
                                       setState(() => _joystick = v))
                               : _TiltIndicator(attitude: _attitude),
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            _BigButton(
+                              label: 'ARM',
+                              onTap: _toggleSpeedbrakeArm,
+                              active: _speedbrakeArmed,
+                              compact: true,
+                            ),
+                            const SizedBox(height: 8),
+                            _SpeedbrakeLever(onStep: _stepSpeedbrake),
+                          ],
                         ),
                       ),
                       _ThrottleLever(
@@ -930,20 +971,132 @@ class _ManualJoystickState extends State<_ManualJoystick>
 /// about what's really engaged.
 class _BigButton extends StatelessWidget {
   const _BigButton(
-      {required this.label, required this.onTap, this.active = false});
+      {required this.label,
+      required this.onTap,
+      this.active = false,
+      this.compact = false});
 
   final String label;
   final VoidCallback onTap;
   final bool active;
+  // Shrinks to a small toggle indicator (the spoiler ARM button) instead of
+  // the main button row's usual glanceable size.
+  final bool compact;
 
   @override
   Widget build(BuildContext context) {
+    final child = Text(label,
+        style: compact ? const TextStyle(fontSize: 11) : null);
     return SizedBox(
-      width: 120,
-      height: 56,
+      width: compact ? 64 : 120,
+      height: compact ? 36 : 56,
       child: active
-          ? FilledButton(onPressed: onTap, child: Text(label))
-          : FilledButton.tonal(onPressed: onTap, child: Text(label)),
+          ? FilledButton(onPressed: onTap, child: child)
+          : FilledButton.tonal(onPressed: onTap, child: child),
+    );
+  }
+}
+
+/// Speedbrake/spoiler lever: a small number of discrete detents (0..2, per
+/// the wireframe's "2/1/0" labels) rather than a continuous drag-to-target
+/// — SimConnect has no exact-detent "set spoiler position" event
+/// (SPOILERS_INC/SPOILERS_DEC only step it, same limitation as flaps), so
+/// dragging across a detent boundary sends one BUTTON tap per step instead
+/// of an absolute value. Up = more deployed, matching the throttle lever's
+/// up-is-more convention.
+///
+/// Unlike the throttle lever, there is no TELEMETRY field for spoiler
+/// handle position (adding one would be a protocol change, out of scope
+/// for this milestone), so this widget's position is purely local — it
+/// can't mirror an in-sim spoiler change the way the throttle lever mirrors
+/// throttlePercent.
+class _SpeedbrakeLever extends StatefulWidget {
+  const _SpeedbrakeLever({required this.onStep});
+
+  /// Called with the number of detents moved: positive for SPOILERS_INC
+  /// taps, negative for SPOILERS_DEC taps.
+  final ValueChanged<int> onStep;
+
+  @override
+  State<_SpeedbrakeLever> createState() => _SpeedbrakeLeverState();
+}
+
+class _SpeedbrakeLeverState extends State<_SpeedbrakeLever> {
+  static const _detentMax = 2; // detents 0 (retracted) .. 2 (full deploy)
+  static const _height = 160.0;
+  static const _knobHeight = 32.0;
+
+  double _dragValue = 0; // fractional position while dragging, 0.._detentMax
+  int _detent = 0;
+
+  void _onDragStart(DragStartDetails details) {
+    _dragValue = _detent.toDouble();
+  }
+
+  void _onDragUpdate(DragUpdateDetails details) {
+    setState(() {
+      _dragValue = (_dragValue - details.delta.dy / (_height / _detentMax))
+          .clamp(0.0, _detentMax.toDouble());
+    });
+    final newDetent = _dragValue.round();
+    if (newDetent != _detent) {
+      widget.onStep(newDetent - _detent);
+      _detent = newDetent;
+    }
+  }
+
+  void _onDragEnd(DragEndDetails details) {
+    setState(() => _dragValue = _detent.toDouble()); // snap knob to the detent
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return GestureDetector(
+      onVerticalDragStart: _onDragStart,
+      onVerticalDragUpdate: _onDragUpdate,
+      onVerticalDragEnd: _onDragEnd,
+      child: Container(
+        width: 56,
+        height: _height,
+        decoration: BoxDecoration(
+          color: scheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            const Positioned(
+                top: 6, child: Text('SPD', style: TextStyle(fontSize: 11))),
+            const Positioned(
+              right: 4,
+              top: 24,
+              bottom: 8,
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text('2', style: TextStyle(fontSize: 10)),
+                  Text('1', style: TextStyle(fontSize: 10)),
+                  Text('0', style: TextStyle(fontSize: 10)),
+                ],
+              ),
+            ),
+            Align(
+              // y: -1 = top (full deploy), 1 = bottom (retracted).
+              alignment: Alignment(0, 1 - (_dragValue / _detentMax) * 2),
+              child: Container(
+                width: 40,
+                height: _knobHeight,
+                margin: const EdgeInsets.symmetric(horizontal: 4),
+                decoration: BoxDecoration(
+                  color: scheme.primary,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
