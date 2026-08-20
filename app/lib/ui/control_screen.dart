@@ -8,8 +8,10 @@ import '../network/protocol.dart' as proto;
 import '../network/udp_client.dart';
 import '../sensors/attitude.dart';
 import '../state/connection.dart';
+import '../state/settings.dart';
 import '../state/slider_axis.dart';
 import '../state/telemetry.dart';
+import 'settings_screen.dart';
 
 /// Button IDs used by this screen's MVP button set — must match whatever
 /// the server config maps them to (server/internal/config).
@@ -33,6 +35,10 @@ class ControlScreen extends ConsumerStatefulWidget {
 class _ControlScreenState extends ConsumerState<ControlScreen> {
   final _attitudeStream = AttitudeStream();
   Attitude _attitude = const Attitude(pitch: 0, roll: 0);
+  // x: roll, y: pitch — same axis mapping _TiltIndicator already uses for
+  // Alignment(roll, pitch), so the joystick reads the same way the tilt
+  // display does.
+  Offset _joystick = Offset.zero;
   StreamSubscription<Attitude>? _attitudeSub;
   Timer? _sendTimer;
   int _buttonEventId = 0;
@@ -51,9 +57,10 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
 
   void _sendAxis() {
     final slider = ref.read(sliderAxisProvider);
+    final manualJoystick = ref.read(manualJoystickProvider);
     ref.read(udpClientProvider).sendAxis(proto.Axis(
-          pitch: _attitude.pitch,
-          roll: _attitude.roll,
+          pitch: manualJoystick ? _joystick.dy : _attitude.pitch,
+          roll: manualJoystick ? _joystick.dx : _attitude.roll,
           throttle: slider.throttle,
           rudder: slider.rudder,
         ));
@@ -89,6 +96,7 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
   Widget build(BuildContext context) {
     final connectionStatus = ref.watch(connectionStatusProvider).valueOrNull;
     final telemetry = ref.watch(telemetryProvider).valueOrNull;
+    final manualJoystick = ref.watch(manualJoystickProvider);
 
     // Pause state comes from the sim's own Pause system event (TELEMETRY),
     // not a locally-guessed toggle — so an external pause/unpause (the Esc
@@ -112,6 +120,13 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
             tooltip: 'Recenter tilt',
             onPressed: _attitudeStream.recenter,
           ),
+          IconButton(
+            icon: const Icon(Icons.settings),
+            tooltip: 'Settings',
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const SettingsScreen()),
+            ),
+          ),
         ],
       ),
       body: SafeArea(
@@ -125,8 +140,14 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
                   child: Row(
                     children: [
                       Expanded(
-                          child: Center(
-                              child: _TiltIndicator(attitude: _attitude))),
+                        child: Center(
+                          child: manualJoystick
+                              ? _ManualJoystick(
+                                  onChanged: (v) =>
+                                      setState(() => _joystick = v))
+                              : _TiltIndicator(attitude: _attitude),
+                        ),
+                      ),
                       _ThrottleLever(
                         onChanged: (v) => ref
                             .read(sliderAxisProvider.notifier)
@@ -514,6 +535,89 @@ class _RudderStickState extends State<_RudderStick>
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Settings-gated 2D pitch/roll input, replacing the tilt sensor as the
+/// AXIS pitch/roll source while enabled (see settings_screen.dart and
+/// _ControlScreenState._sendAxis). Same spring-back drag pattern as
+/// _RudderStick, extended from one axis to two.
+class _ManualJoystick extends StatefulWidget {
+  const _ManualJoystick({required this.onChanged});
+
+  final ValueChanged<Offset> onChanged; // dx/dy each -1..1
+
+  @override
+  State<_ManualJoystick> createState() => _ManualJoystickState();
+}
+
+class _ManualJoystickState extends State<_ManualJoystick>
+    with SingleTickerProviderStateMixin {
+  static const _size = 160.0;
+  static const _knobSize = 40.0;
+
+  Offset _value = Offset.zero; // dx/dy each -1..1
+  Offset _springBackFrom = Offset.zero;
+  late final AnimationController _springBack;
+
+  @override
+  void initState() {
+    super.initState();
+    _springBack = AnimationController(
+        vsync: this, duration: const Duration(milliseconds: 150))
+      ..addListener(() {
+        setState(() => _value = _springBackFrom * (1 - _springBack.value));
+        widget.onChanged(_value);
+      });
+  }
+
+  void _onDragUpdate(DragUpdateDetails details) {
+    _springBack.stop();
+    setState(() {
+      _value = Offset(
+        (_value.dx + details.delta.dx / (_size / 2)).clamp(-1.0, 1.0),
+        (_value.dy + details.delta.dy / (_size / 2)).clamp(-1.0, 1.0),
+      );
+    });
+    widget.onChanged(_value);
+  }
+
+  void _onDragEnd(DragEndDetails details) {
+    _springBackFrom = _value;
+    _springBack.forward(from: 0);
+  }
+
+  @override
+  void dispose() {
+    _springBack.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return GestureDetector(
+      onPanUpdate: _onDragUpdate,
+      onPanEnd: _onDragEnd,
+      child: Container(
+        width: _size,
+        height: _size,
+        decoration: BoxDecoration(
+          color: scheme.surfaceContainerHighest,
+          shape: BoxShape.circle,
+          border: Border.all(color: scheme.outline),
+        ),
+        child: Align(
+          alignment: Alignment(_value.dx, _value.dy),
+          child: Container(
+            width: _knobSize,
+            height: _knobSize,
+            decoration:
+                BoxDecoration(color: scheme.primary, shape: BoxShape.circle),
+          ),
         ),
       ),
     );
