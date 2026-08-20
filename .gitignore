@@ -29,3 +29,4 @@ app/pubspec.lock
 
 # Internal tracking doc, not part of the public repo
 docs/milestones.md
+docs/*.png
