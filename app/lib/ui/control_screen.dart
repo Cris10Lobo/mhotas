@@ -377,6 +377,14 @@ class _Movable extends ConsumerWidget {
     Widget content = child;
     if (editMode) {
       content = GestureDetector(
+        // Child is wrapped in IgnorePointer below, so it never hit-tests
+        // true — deferToChild (the default) would then never fire
+        // onPanUpdate either. opaque makes this detector capture drags
+        // over its whole bounds regardless, which is every _Movable
+        // control, not just this one (ARM was just the one that surfaced
+        // it: a FilledButton's own ink hit-testing happened to mask the
+        // bug on the plain custom-painted levers/sticks).
+        behavior: HitTestBehavior.opaque,
         onPanUpdate: (details) => ref
             .read(layoutOffsetsProvider.notifier)
             .addDelta(id, details.delta),
