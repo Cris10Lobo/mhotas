@@ -21,14 +21,17 @@ import (
 
 // Client event IDs: arbitrary but must be unique within a connection.
 const (
-	eventAxisElevator  uint32 = 1
-	eventAxisAileron   uint32 = 2
-	eventAxisRudder    uint32 = 3
-	eventGearToggle    uint32 = 4
-	eventParkingBrake  uint32 = 5
-	eventPauseSet      uint32 = 6
-	eventThrottleEx1   uint32 = 7
-	eventReverseToggle uint32 = 8
+	eventAxisElevator   uint32 = 1
+	eventAxisAileron    uint32 = 2
+	eventAxisRudder     uint32 = 3
+	eventGearToggle     uint32 = 4
+	eventParkingBrake   uint32 = 5
+	eventPauseSet       uint32 = 6
+	eventThrottleEx1    uint32 = 7
+	eventReverseToggle  uint32 = 8
+	eventSpoilersInc    uint32 = 13
+	eventSpoilersDec    uint32 = 14
+	eventSpoilersArmSet uint32 = 15
 
 	notificationGroup uint32 = 1
 
@@ -167,11 +170,15 @@ func setupEvents(client engine.Client) {
 	client.MapClientEventToSimEvent(eventPauseSet, "PAUSE_SET")
 	client.MapClientEventToSimEvent(eventThrottleEx1, "THROTTLE_AXIS_SET_EX1")
 	client.MapClientEventToSimEvent(eventReverseToggle, "THROTTLE_REVERSE_THRUST_TOGGLE")
+	client.MapClientEventToSimEvent(eventSpoilersInc, "SPOILERS_INC")
+	client.MapClientEventToSimEvent(eventSpoilersDec, "SPOILERS_DEC")
+	client.MapClientEventToSimEvent(eventSpoilersArmSet, "SPOILERS_ARM_SET")
 
 	for _, id := range []uint32{
 		eventAxisElevator, eventAxisAileron, eventAxisRudder,
 		eventGearToggle, eventParkingBrake, eventPauseSet,
 		eventThrottleEx1, eventReverseToggle,
+		eventSpoilersInc, eventSpoilersDec, eventSpoilersArmSet,
 	} {
 		client.AddClientEventToNotificationGroup(notificationGroup, id, false)
 	}
@@ -302,6 +309,29 @@ func (c *Client) SetPause(paused bool) error {
 		data = 1
 	}
 	return c.transmit(eventPauseSet, data)
+}
+
+// IncrSpoilers fires SPOILERS_INC. Experimental (milestone 14): no exact-
+// detent "set spoiler position" event exists in SimConnect, so, same as
+// flaps, deploy/retract is step-based rather than absolute — confirm this
+// gives usable resolution once tested live.
+func (c *Client) IncrSpoilers() error { return c.transmit(eventSpoilersInc, 0) }
+
+// DecrSpoilers fires SPOILERS_DEC. See IncrSpoilers.
+func (c *Client) DecrSpoilers() error { return c.transmit(eventSpoilersDec, 0) }
+
+// SetSpoilersArmed fires SPOILERS_ARM_SET with an explicit target (1 =
+// armed, 0 = disarmed). Deliberately not SPOILERS_ARM_TOGGLE: multiple
+// independent community/DevSupport reports describe it arming successfully
+// but failing to disarm — the same toggle-unreliability class as
+// PAUSE_TOGGLE (see SetPause) — so this uses the explicit-value SET instead.
+// Experimental: not yet confirmed against a live sim.
+func (c *Client) SetSpoilersArmed(armed bool) error {
+	var data uint32
+	if armed {
+		data = 1
+	}
+	return c.transmit(eventSpoilersArmSet, data)
 }
 
 func (c *Client) Close() error {
