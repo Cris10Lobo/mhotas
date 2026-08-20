@@ -47,6 +47,8 @@ func (b *fakeBackend) SetButton(id control.ButtonID, pressed bool) error {
 	return nil
 }
 
+func (b *fakeBackend) Ready() bool { return true }
+
 func (b *fakeBackend) Close() error { return nil }
 
 func (b *fakeBackend) lastAxis(axis control.AxisID) (float64, bool) {

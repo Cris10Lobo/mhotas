@@ -144,6 +144,12 @@ func (b *Backend) SetButton(id control.ButtonID, pressed bool) error {
 	}
 }
 
+// Ready reports whether the underlying SimConnect connection has completed
+// its handshake with MSFS2024 — see simlink.Client.Ready.
+func (b *Backend) Ready() bool {
+	return b.client.Ready()
+}
+
 func (b *Backend) Close() error {
 	return b.client.Close()
 }

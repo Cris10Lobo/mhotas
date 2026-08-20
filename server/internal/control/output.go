@@ -51,6 +51,15 @@ type Output interface {
 	// SetButton applies a discrete button state change.
 	SetButton(id ButtonID, pressed bool) error
 
+	// Ready reports whether the backend is actually able to drive the
+	// simulator right now (e.g. SimConnect has completed its handshake with
+	// a running MSFS2024) — distinct from the process being up. SetAxis/
+	// SetButton already tolerate a not-ready backend (non-fatal error,
+	// logged and skipped); this exists purely for status display (the TUI)
+	// so an operator can tell "server up, sim not connected yet" apart from
+	// "everything's fine" without reading log scrollback.
+	Ready() bool
+
 	// Close releases any backend resources (SimConnect connection, vJoy
 	// device handle, etc.).
 	Close() error

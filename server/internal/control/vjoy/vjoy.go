@@ -33,4 +33,8 @@ func (b *Backend) SetButton(id control.ButtonID, pressed bool) error {
 	return errNotImplemented
 }
 
+// Ready is always false — there's nothing to be ready, the backend isn't
+// implemented yet.
+func (b *Backend) Ready() bool { return false }
+
 func (b *Backend) Close() error { return nil }
