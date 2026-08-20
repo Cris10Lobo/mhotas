@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -107,9 +108,9 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
       appBar: AppBar(
         title: const Text('mHOTAS'),
         actions: [
-          IconButton(
+          TextButton.icon(
             icon: const Icon(Icons.center_focus_strong),
-            tooltip: 'Recenter tilt',
+            label: const Text('Calibrate'),
             onPressed: _attitudeStream.recenter,
           ),
         ],
@@ -181,15 +182,20 @@ class _ConnectionBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final connected = status == ConnectionStatus.connected;
-    return Container(
-      width: double.infinity,
-      color: connected ? Colors.green.shade700 : Colors.red.shade700,
+    // versionMismatch/error/null all read as "not usable" to the pilot —
+    // same as disconnected — so they share its label and color rather than
+    // adding states nobody asked to distinguish at a glance.
+    final (label, color) = switch (status) {
+      ConnectionStatus.connected => ('Connected', Colors.green),
+      ConnectionStatus.connecting => ('Connecting', Colors.orange),
+      _ => ('Disconnected', Colors.red),
+    };
+    return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Text(
-        connected ? 'Connected' : 'Connection lost',
+        'mHOTAS · $label',
         textAlign: TextAlign.center,
-        style: const TextStyle(color: Colors.white),
+        style: TextStyle(color: color, fontWeight: FontWeight.bold),
       ),
     );
   }
@@ -233,34 +239,100 @@ class _TelemetryRow extends StatelessWidget {
 
 /// A small sanity/calibration aid, not the primary interaction surface —
 /// the user feels tilt physically, they don't watch this while flying.
+/// Styled as a simple artificial horizon rather than a dot-in-a-box: the
+/// sky/ground plane rotates with roll and shifts with pitch behind a fixed
+/// aircraft reference, plus a numeric readout for precise calibration checks.
 class _TiltIndicator extends StatelessWidget {
   const _TiltIndicator({required this.attitude});
 
   final Attitude attitude;
 
+  // Matches AttitudeStream's default maxTiltRadians (attitude.dart) — the
+  // normalized -1..1 attitude values are full-scale at this angle.
+  static const _maxTiltDegrees = 45.0;
+
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: 160,
-      height: 160,
-      decoration: BoxDecoration(
-        border: Border.all(color: Colors.grey),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Align(
-        alignment: Alignment(
-          attitude.roll.clamp(-1, 1),
-          attitude.pitch.clamp(-1, 1),
+    final pitchDeg = attitude.pitch * _maxTiltDegrees;
+    final rollDeg = attitude.roll * _maxTiltDegrees;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        ClipRRect(
+          borderRadius: BorderRadius.circular(8),
+          child: Container(
+            width: 160,
+            height: 160,
+            decoration: BoxDecoration(
+              border: Border.all(color: Colors.grey),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: CustomPaint(
+              size: const Size(160, 160),
+              painter: _HorizonPainter(pitchDeg: pitchDeg, rollDeg: rollDeg),
+            ),
+          ),
         ),
-        child: Container(
-          width: 20,
-          height: 20,
-          decoration:
-              const BoxDecoration(color: Colors.blue, shape: BoxShape.circle),
-        ),
-      ),
+        const SizedBox(height: 4),
+        Text('P: ${pitchDeg.round()}°  R: ${rollDeg.round()}°'),
+      ],
     );
   }
+}
+
+class _HorizonPainter extends CustomPainter {
+  _HorizonPainter({required this.pitchDeg, required this.rollDeg});
+
+  final double pitchDeg;
+  final double rollDeg;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = size.center(Offset.zero);
+    // Nose up shows more sky, so the horizon line moves down on screen as
+    // pitch increases; scaled so full deflection puts it at the box edge.
+    final pitchOffset =
+        pitchDeg / _TiltIndicator._maxTiltDegrees * size.height / 2;
+    // Oversized so the rotated sky/ground rectangles still cover the box's
+    // corners instead of leaving gaps at max bank.
+    final oversize = size.longestSide * 2;
+
+    canvas.save();
+    canvas.translate(center.dx, center.dy);
+    // Rotated opposite the roll sign: the aircraft reference stays fixed and
+    // level while the horizon appears to bank under it, matching a real AH.
+    canvas.rotate(-rollDeg * math.pi / 180);
+    canvas.drawRect(
+      Rect.fromLTWH(-oversize, -oversize + pitchOffset, oversize * 2, oversize),
+      Paint()..color = Colors.lightBlue.shade300,
+    );
+    canvas.drawRect(
+      Rect.fromLTWH(-oversize, pitchOffset, oversize * 2, oversize),
+      Paint()..color = Colors.brown.shade400,
+    );
+    canvas.drawLine(
+      Offset(-oversize, pitchOffset),
+      Offset(oversize, pitchOffset),
+      Paint()
+        ..color = Colors.white
+        ..strokeWidth = 2,
+    );
+    canvas.restore();
+
+    final aircraftPaint = Paint()
+      ..color = Colors.yellow.shade700
+      ..strokeWidth = 3
+      ..strokeCap = StrokeCap.round;
+    canvas.drawLine(Offset(center.dx - 24, center.dy),
+        Offset(center.dx - 8, center.dy), aircraftPaint);
+    canvas.drawLine(Offset(center.dx + 8, center.dy),
+        Offset(center.dx + 24, center.dy), aircraftPaint);
+    canvas.drawCircle(center, 3, aircraftPaint);
+  }
+
+  @override
+  bool shouldRepaint(_HorizonPainter oldDelegate) =>
+      oldDelegate.pitchDeg != pitchDeg || oldDelegate.rollDeg != rollDeg;
 }
 
 /// Throttle lever: -1 (full reverse) .. 1 (full forward). The forward half
