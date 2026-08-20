@@ -27,8 +27,9 @@ class _ScanScreenState extends State<ScanScreen> {
     final raw = capture.barcodes.first.rawValue;
     if (raw == null) return;
     final parsed = _parseHostPort(raw);
-    if (parsed == null)
+    if (parsed == null) {
       return; // not a mhotas QR (or a garbled read) — keep scanning
+    }
     _handled = true;
     Navigator.of(context).pop(parsed);
   }
