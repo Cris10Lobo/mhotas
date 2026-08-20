@@ -369,7 +369,7 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
                 child: IgnorePointer(
                   child: Center(
                     child: Text(
-                      'Drag controls to reposition · tap the layout icon to lock',
+                      'Drag a control\'s corner handle to reposition it · tap the layout icon to lock',
                       style: TextStyle(fontSize: 12),
                     ),
                   ),
@@ -386,10 +386,16 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
 /// [layoutEditModeProvider] is on — normal flow/flex layout (Row/Column)
 /// is untouched underneath; this only applies a paint-time offset on top,
 /// so the common case (no offset saved for this id) renders pixel-
-/// identical to before free-position mode existed. In edit mode the
-/// child's own gestures (drag levers, button taps) are suppressed via
-/// [IgnorePointer] so a drag only ever repositions the widget, never both
-/// repositions it and sends a command.
+/// identical to before free-position mode existed.
+///
+/// Dragging happens only via a small corner handle — like the grip tab
+/// drag-and-drop UIs elsewhere use — not by grabbing anywhere on the
+/// control itself. An earlier version made the whole control one big drag
+/// surface (with its own gestures suppressed via IgnorePointer so a drag
+/// didn't also fire a button/lever), but that made compound controls (a
+/// lever plus a button, say) fiddly to grab without missing the intended
+/// target — reported live. The control underneath now keeps working
+/// completely normally, in or out of edit mode; only the handle differs.
 class _Movable extends ConsumerWidget {
   const _Movable({required this.id, required this.child});
 
@@ -404,18 +410,35 @@ class _Movable extends ConsumerWidget {
 
     Widget content = child;
     if (editMode) {
-      content = GestureDetector(
-        onPanUpdate: (details) => ref
-            .read(layoutOffsetsProvider.notifier)
-            .addDelta(id, details.delta),
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            border: Border.all(
-                color: Theme.of(context).colorScheme.primary, width: 2),
-            borderRadius: BorderRadius.circular(8),
+      final scheme = Theme.of(context).colorScheme;
+      content = Stack(
+        clipBehavior: Clip.none,
+        children: [
+          DecoratedBox(
+            decoration: BoxDecoration(
+              border: Border.all(color: scheme.primary, width: 2),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: child,
           ),
-          child: IgnorePointer(child: child),
-        ),
+          Positioned(
+            top: -10,
+            right: -10,
+            child: GestureDetector(
+              onPanUpdate: (details) => ref
+                  .read(layoutOffsetsProvider.notifier)
+                  .addDelta(id, details.delta),
+              child: Container(
+                width: 28,
+                height: 28,
+                decoration: BoxDecoration(
+                    color: scheme.primary, shape: BoxShape.circle),
+                child: Icon(Icons.drag_indicator,
+                    size: 16, color: scheme.onPrimary),
+              ),
+            ),
+          ),
+        ],
       );
     }
     return Transform.translate(offset: offset, child: content);
@@ -1215,16 +1238,32 @@ class _BigButton extends StatelessWidget {
   // the main button row's usual glanceable size.
   final bool compact;
 
+  // Material 3's default FilledButton padding (~24px each side) alone
+  // exceeds the compact box's whole 64px width, forcing even a 3-letter
+  // label like "ARM" to wrap — reported live. Tight padding + no enforced
+  // minimum tap-target size so the button actually fits the SizedBox
+  // instead of fighting it.
+  static const _compactStyle = ButtonStyle(
+    padding: WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 4)),
+    minimumSize: WidgetStatePropertyAll(Size.zero),
+    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+  );
+
   @override
   Widget build(BuildContext context) {
-    final child =
-        Text(label, style: compact ? const TextStyle(fontSize: 11) : null);
+    final child = Text(
+      label,
+      style: compact ? const TextStyle(fontSize: 11) : null,
+      softWrap: false,
+      overflow: TextOverflow.visible,
+    );
+    final style = compact ? _compactStyle : null;
     return SizedBox(
       width: compact ? 64 : 120,
       height: compact ? 36 : 56,
       child: active
-          ? FilledButton(onPressed: onTap, child: child)
-          : FilledButton.tonal(onPressed: onTap, child: child),
+          ? FilledButton(onPressed: onTap, style: style, child: child)
+          : FilledButton.tonal(onPressed: onTap, style: style, child: child),
     );
   }
 }
