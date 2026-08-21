@@ -246,7 +246,17 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
                   child: Row(
                     children: [
                       Expanded(
-                        child: Center(
+                        child: Align(
+                          // topCenter, not Center: this Row's siblings are
+                          // all top-aligned (Row's own default cross-axis
+                          // behavior for them), but attitude's extra
+                          // trailing caption text made this the one item
+                          // tall enough for full vertical centering to
+                          // actually matter — it drifted down far enough
+                          // to visually collide with the bottom-anchored
+                          // rudder control once rudder was widened,
+                          // found live.
+                          alignment: Alignment.topCenter,
                           child: _Movable(
                             id: 'attitude',
                             child: manualJoystick
