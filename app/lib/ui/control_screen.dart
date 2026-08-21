@@ -361,9 +361,12 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
                 ),
               ),
             ),
+            // bottom, not top: the status tiles row sits flush at the top of
+            // the Column with no clearance, so a top-pinned hint painted
+            // over it there — caught live via a real-device screenshot.
             if (layoutEditMode)
               const Positioned(
-                top: 8,
+                bottom: 8,
                 left: 0,
                 right: 0,
                 child: IgnorePointer(
