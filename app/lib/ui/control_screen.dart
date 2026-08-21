@@ -386,41 +386,111 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
 }
 
 /// Wraps a control so it can be dragged to a custom position while
-/// [layoutEditModeProvider] is on — normal flow/flex layout (Row/Column)
-/// is untouched underneath; this only applies a paint-time offset on top,
-/// so the common case (no offset saved for this id) renders pixel-
-/// identical to before free-position mode existed.
+/// [layoutEditModeProvider] is on. Outside edit mode this renders
+/// pixel-identical to before free-position mode existed (a plain
+/// paint-time [Transform.translate] by the saved offset, zero in the
+/// common case). In edit mode, the real interactive control moves into
+/// the app's [Overlay] — positioned via [CompositedTransformFollower]
+/// linked back to an invisible anchor that stays in the normal Row/Column
+/// flow purely to reserve layout space — rather than staying inline with
+/// a paint-only offset.
 ///
-/// The whole control is the drag surface in edit mode, not a small corner
-/// handle — two earlier versions (a whole-surface drag, then a corner
-/// handle) both ran into hit-testing edge cases (a Positioned child
-/// overflowing its Stack isn't touchable there even with Clip.none; even
-/// flush with the corner, a 44px circle was still easy to miss on compact
-/// controls) that a single full-area GestureDetector with no sibling to
-/// conflict with just doesn't have. The control underneath stays inert
-/// ([IgnorePointer]) while dragging, so there's nothing for the drag
-/// gesture to compete with regardless of where on the control you grab.
-class _Movable extends ConsumerWidget {
+/// That Overlay hop is fixing a real bug, not decoration: with a plain
+/// inline `Transform.translate`, a dragged control's *layout slot* in the
+/// Row/Column never moves, only where it paints does. Hit-testing for
+/// flex-layout siblings is based on that untouched slot — so once a
+/// dragged control's new position lands on a spot a different,
+/// *undragged* sibling still occupies (easy in a tightly packed Row),
+/// that sibling's own drag surface — still sitting exactly at its own
+/// unmoved slot — wins every future touch there, and the dragged control
+/// becomes permanently unreachable. Reported live as "some of them can't
+/// be dragged or dropped again" — exactly the controls whose new spot
+/// happened to overlap another control's original footprint. Moving the
+/// real control into the Overlay keys its hit-test box to where it
+/// *actually* is, so this class of collision can't happen — same as any
+/// two ordinarily-overlapping widgets, whichever one visually covers a
+/// point receives the touch there.
+///
+/// The whole control is the drag surface, not a small corner handle — two
+/// earlier versions (a whole-surface drag, then a corner handle) ran into
+/// hit-testing edge cases of their own (a Positioned child overflowing its
+/// Stack isn't touchable there even with Clip.none; even flush with the
+/// corner, a 44px circle was still easy to miss on compact controls) that
+/// a single full-area GestureDetector doesn't have. The control underneath
+/// stays inert ([IgnorePointer]) while dragging, so there's nothing for
+/// the drag gesture to compete with regardless of where you grab it.
+class _Movable extends ConsumerStatefulWidget {
   const _Movable({required this.id, required this.child});
 
   final String id;
   final Widget child;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_Movable> createState() => _MovableState();
+}
+
+class _MovableState extends ConsumerState<_Movable> {
+  final _link = LayerLink();
+  final _overlay = OverlayPortalController();
+
+  @override
+  Widget build(BuildContext context) {
     final editMode = ref.watch(layoutEditModeProvider);
     final offset =
-        ref.watch(layoutOffsetsProvider.select((m) => m[id])) ?? Offset.zero;
+        ref.watch(layoutOffsetsProvider.select((m) => m[widget.id])) ??
+            Offset.zero;
 
-    Widget content = child;
-    if (editMode) {
-      content = _DraggableControl(
-        onPanUpdate: (delta) =>
-            ref.read(layoutOffsetsProvider.notifier).addDelta(id, delta),
-        child: child,
-      );
-    }
-    return Transform.translate(offset: offset, child: content);
+    // show()/hide() as a reaction to the mode *changing*, not called
+    // unconditionally every build (which happens often — e.g. every
+    // telemetry tick) — both calls are no-ops when already in the target
+    // state, but there's no reason to invoke them that often regardless.
+    ref.listen<bool>(layoutEditModeProvider, (previous, next) {
+      if (next) {
+        _overlay.show();
+      } else {
+        _overlay.hide();
+      }
+    });
+
+    return CompositedTransformTarget(
+      link: _link,
+      child: OverlayPortal(
+        controller: _overlay,
+        overlayChildBuilder: (context) => CompositedTransformFollower(
+          link: _link,
+          showWhenUnlinked: false,
+          offset: offset,
+          // Align, not the control directly: an Overlay hands its entries
+          // *tight* constraints matching its own (screen) size, and
+          // CompositedTransformFollower passes that straight through — a
+          // real device run confirmed even a hardcoded SizedBox(64, 64)
+          // still rendered stretched to nearly full-screen underneath it.
+          // Align is the standard fix: regardless of the tight constraint
+          // *it* receives, it always gives its own child loose ones, so
+          // the control is finally free to be its own natural size again.
+          child: Align(
+            alignment: Alignment.topLeft,
+            child: _DraggableControl(
+              onPanUpdate: (delta) => ref
+                  .read(layoutOffsetsProvider.notifier)
+                  .addDelta(widget.id, delta),
+              child: widget.child,
+            ),
+          ),
+        ),
+        // ponytail: renders widget.child a second time here (invisible,
+        // inert) purely to reserve the same layout space and give
+        // CompositedTransformTarget something to anchor to — cheaper than
+        // it sounds for ~9 lightweight controls, but it does mean e.g.
+        // _ThrottleLever's AnimationController ticks twice while in edit
+        // mode. Upgrade path if that ever matters: measure the child's
+        // size once (LayoutBuilder/GlobalKey) and reserve a plain SizedBox
+        // instead of rendering it for real.
+        child: editMode
+            ? Opacity(opacity: 0, child: IgnorePointer(child: widget.child))
+            : Transform.translate(offset: offset, child: widget.child),
+      ),
+    );
   }
 }
 
@@ -812,8 +882,23 @@ class _ThrottleLever extends StatefulWidget {
 
 class _ThrottleLeverState extends State<_ThrottleLever>
     with SingleTickerProviderStateMixin {
-  static const _height = 220.0;
-  static const _knobHeight = 40.0;
+  // Longer, requested directly — capped by what the row actually has
+  // vertically (a real device run overflowed at 320 by 8px).
+  static const _height = 300.0;
+  static const _knobHeight = 36.0;
+
+  // 80% of the track is idle->full-forward thrust, 20% is reverse —
+  // requested directly, instead of splitting the two zones evenly, since
+  // reverse is used far less and coarser control there is fine.
+  static const _forwardFraction = 0.8;
+
+  // y-alignment (-1 top .. 1 bottom) of the idle position, and of any given
+  // throttle value, under that split. At v=0 this is _idleY; it eases out
+  // to -1 (top) as v->1 and to 1 (bottom) as v->-1, at whatever rate each
+  // zone's share of the track implies.
+  double get _idleY => -1 + 2 * _forwardFraction;
+  double _knobY(double v) =>
+      v >= 0 ? _idleY + (-1 - _idleY) * v : _idleY - (1 - _idleY) * v;
 
   double _value = 0; // -1..1
   double _animFrom = 0;
@@ -894,8 +979,15 @@ class _ThrottleLeverState extends State<_ThrottleLever>
 
   void _onDragUpdate(DragUpdateDetails details) {
     setState(() {
-      // Dragging up (negative dy) increases throttle.
-      _value = (_value - details.delta.dy / (_height / 2)).clamp(-1.0, 1.0);
+      // Dragging up (negative dy) increases throttle. Pixels-per-unit-value
+      // differs by zone since the two zones no longer share the track
+      // evenly (see _forwardFraction) — using the zone the value is
+      // currently in keeps the knob tracking 1:1 under the finger instead
+      // of drifting once idle/full-reverse compress into a smaller strip.
+      final zoneFraction =
+          _value >= 0 ? _forwardFraction : (1 - _forwardFraction);
+      _value = (_value - details.delta.dy / (_height * zoneFraction))
+          .clamp(-1.0, 1.0);
     });
     _notifyChanged();
   }
@@ -918,6 +1010,18 @@ class _ThrottleLeverState extends State<_ThrottleLever>
     super.dispose();
   }
 
+  // Percent labels down the scale, positioned via _knobY at the value each
+  // one represents — 25/50/75/100 span the forward zone, -100 marks full
+  // reverse; no -25/-50/-75 since reverse is a small strip with coarse
+  // control anyway (requested directly).
+  static const _scaleMarks = <(int, double)>[
+    (100, 1.0),
+    (75, 0.75),
+    (50, 0.5),
+    (25, 0.25),
+    (-100, -1.0),
+  ];
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
@@ -925,31 +1029,61 @@ class _ThrottleLeverState extends State<_ThrottleLever>
       onVerticalDragStart: _onDragStart,
       onVerticalDragUpdate: _onDragUpdate,
       onVerticalDragEnd: _onDragEnd,
-      child: Container(
-        width: 64,
+      child: SizedBox(
         height: _height,
-        decoration: BoxDecoration(
-          color: scheme.surfaceContainerHighest,
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Stack(
-          alignment: Alignment.center,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            const Positioned(
-                top: 6, child: Text('THR', style: TextStyle(fontSize: 11))),
-            // Idle-line marker: reverse zone is below this.
-            Container(height: 1, color: scheme.outline),
-            Align(
-              alignment: Alignment(
-                  0, -_value), // y: -1 = top (full fwd), 1 = bottom (full rev)
-              child: Container(
-                width: 52,
-                height: _knobHeight,
-                margin: const EdgeInsets.symmetric(horizontal: 4),
-                decoration: BoxDecoration(
-                  color: _value < 0 ? scheme.error : scheme.primary,
-                  borderRadius: BorderRadius.circular(8),
-                ),
+            SizedBox(
+              width: 28,
+              height: _height,
+              child: Stack(
+                children: [
+                  for (final (label, v) in _scaleMarks)
+                    Align(
+                      alignment: Alignment(0, _knobY(v)),
+                      child:
+                          Text('$label', style: const TextStyle(fontSize: 9)),
+                    ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 4),
+            Container(
+              width: 64,
+              height: _height,
+              decoration: BoxDecoration(
+                color: scheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Stack(
+                alignment: Alignment.center,
+                children: [
+                  const Positioned(
+                      top: 6,
+                      child: Text('THR', style: TextStyle(fontSize: 11))),
+                  // Idle-line marker, at _idleY rather than dead center —
+                  // the 80/20 split means idle no longer sits halfway down.
+                  Align(
+                    alignment: Alignment(0, _idleY),
+                    child: Container(
+                        width: double.infinity,
+                        height: 1,
+                        color: scheme.outline),
+                  ),
+                  Align(
+                    alignment: Alignment(0, _knobY(_value)),
+                    child: Container(
+                      width: 52,
+                      height: _knobHeight,
+                      margin: const EdgeInsets.symmetric(horizontal: 4),
+                      decoration: BoxDecoration(
+                        color: _value < 0 ? scheme.error : scheme.primary,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
           ],
@@ -1103,8 +1237,15 @@ class _RudderStick extends StatefulWidget {
 
 class _RudderStickState extends State<_RudderStick>
     with SingleTickerProviderStateMixin {
-  static const _width = 160.0;
+  static const _width = 240.0; // widened, requested directly
   static const _knobWidth = 44.0;
+
+  // Purely a readout scale, not a synced simvar — the wire protocol sends
+  // a normalized -1..1 axis, and the actual pedal-to-rudder-degree mapping
+  // is the aircraft's/SimConnect's to make, not this app's. 30 degrees
+  // matches typical rudder pedal travel, close enough for an at-a-glance
+  // deflection readout (requested directly, increment left to us).
+  static const _maxDeflectionDeg = 30;
 
   double _value = 0; // -1..1
   double _springBackFrom = 0;
@@ -1143,32 +1284,42 @@ class _RudderStickState extends State<_RudderStick>
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final deg = (_value.abs() * _maxDeflectionDeg).round();
+    final deflectionLabel =
+        deg == 0 ? '0°' : (_value < 0 ? 'L $deg°' : 'R $deg°');
     return GestureDetector(
       onHorizontalDragUpdate: _onDragUpdate,
       onHorizontalDragEnd: _onDragEnd,
-      child: Container(
-        width: _width,
-        height: 56,
-        decoration: BoxDecoration(
-          color: scheme.surfaceContainerHighest,
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Stack(
-          alignment: Alignment.center,
-          children: [
-            Align(
-              alignment: Alignment(_value, 0),
-              child: Container(
-                width: _knobWidth,
-                height: 48,
-                margin: const EdgeInsets.all(4),
-                decoration: BoxDecoration(
-                    color: scheme.primary,
-                    borderRadius: BorderRadius.circular(8)),
-              ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: _width,
+            height: 56,
+            decoration: BoxDecoration(
+              color: scheme.surfaceContainerHighest,
+              borderRadius: BorderRadius.circular(12),
             ),
-          ],
-        ),
+            child: Stack(
+              alignment: Alignment.center,
+              children: [
+                Align(
+                  alignment: Alignment(_value, 0),
+                  child: Container(
+                    width: _knobWidth,
+                    height: 48,
+                    margin: const EdgeInsets.all(4),
+                    decoration: BoxDecoration(
+                        color: scheme.primary,
+                        borderRadius: BorderRadius.circular(8)),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(deflectionLabel, style: const TextStyle(fontSize: 11)),
+        ],
       ),
     );
   }
