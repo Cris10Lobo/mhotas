@@ -424,9 +424,17 @@ class _Movable extends ConsumerWidget {
             ),
             child: child,
           ),
+          // top:0/right:0, not negative: Clip.none only lets a Positioned
+          // child *paint* outside the Stack's box, it doesn't extend hit
+          // testing there — a parent (Row/Padding) still gates on "inside my
+          // own reported size" before ever reaching this child, so a
+          // negative offset left ~3/4 of the visible circle untouchable
+          // (reported live as "can't drag some of the components"). Sitting
+          // flush at the corner keeps the whole handle inside the box that's
+          // actually hit-tested.
           Positioned(
-            top: -10,
-            right: -10,
+            top: 0,
+            right: 0,
             child: GestureDetector(
               onPanUpdate: (details) => ref
                   .read(layoutOffsetsProvider.notifier)
