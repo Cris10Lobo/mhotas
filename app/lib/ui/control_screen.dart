@@ -372,7 +372,7 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
                 child: IgnorePointer(
                   child: Center(
                     child: Text(
-                      'Drag a control\'s corner handle to reposition it · tap the layout icon to lock',
+                      'Drag a control anywhere to reposition it · tap the layout icon to lock',
                       style: TextStyle(fontSize: 12),
                     ),
                   ),
@@ -391,19 +391,15 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
 /// so the common case (no offset saved for this id) renders pixel-
 /// identical to before free-position mode existed.
 ///
-/// Dragging happens only via a corner handle — like the grip tab
-/// drag-and-drop UIs elsewhere use — not by grabbing anywhere on the
-/// control itself. The control underneath is inert while in edit mode
-/// ([IgnorePointer]): an earlier version left it live so it could still be
-/// tested mid-reposition, but on the compact, tightly-packed controls
-/// (speedbrake, toe brake, gear...) a thumb that missed the handle by a few
-/// px landed on the button/lever instead and fired it — reported live as
-/// "can't drag some of the components", confirmed by the same handle
-/// working fine on the few large, generously-spaced controls (status
-/// tiles, attitude, rudder) and failing on the small packed ones. Disabling
-/// the control removes that false target instead of just enlarging the
-/// true one, though the handle is bigger now too, and the grab
-/// animation makes it obvious the moment a drag actually starts.
+/// The whole control is the drag surface in edit mode, not a small corner
+/// handle — two earlier versions (a whole-surface drag, then a corner
+/// handle) both ran into hit-testing edge cases (a Positioned child
+/// overflowing its Stack isn't touchable there even with Clip.none; even
+/// flush with the corner, a 44px circle was still easy to miss on compact
+/// controls) that a single full-area GestureDetector with no sibling to
+/// conflict with just doesn't have. The control underneath stays inert
+/// ([IgnorePointer]) while dragging, so there's nothing for the drag
+/// gesture to compete with regardless of where on the control you grab.
 class _Movable extends ConsumerWidget {
   const _Movable({required this.id, required this.child});
 
@@ -418,111 +414,71 @@ class _Movable extends ConsumerWidget {
 
     Widget content = child;
     if (editMode) {
-      final scheme = Theme.of(context).colorScheme;
-      content = Stack(
-        clipBehavior: Clip.none,
-        children: [
-          DecoratedBox(
-            decoration: BoxDecoration(
-              border: Border.all(color: scheme.primary, width: 2),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: IgnorePointer(child: child),
-          ),
-          // top:0/right:0, not negative: Clip.none only lets a Positioned
-          // child *paint* outside the Stack's box, it doesn't extend hit
-          // testing there — a parent (Row/Padding) still gates on "inside my
-          // own reported size" before ever reaching this child, so a
-          // negative offset left most of the visible circle untouchable.
-          // Sitting flush at the corner keeps the whole handle inside the
-          // box that's actually hit-tested.
-          Positioned(
-            top: 0,
-            right: 0,
-            child: _DragHandle(
-              onPanUpdate: (delta) => ref
-                  .read(layoutOffsetsProvider.notifier)
-                  .addDelta(id, delta),
-            ),
-          ),
-        ],
+      content = _DraggableControl(
+        onPanUpdate: (delta) =>
+            ref.read(layoutOffsetsProvider.notifier).addDelta(id, delta),
+        child: child,
       );
     }
     return Transform.translate(offset: offset, child: content);
   }
 }
 
-/// The corner grip tab. 44px — Material's minimum recommended touch
-/// target, up from the original 28px, which was easy to miss on the
-/// smaller controls (reported live). Scales up and darkens the instant a
-/// drag starts so a hit registers as an obvious, visible event rather than
-/// something you have to infer from the control having silently moved.
-class _DragHandle extends StatelessWidget {
-  const _DragHandle({required this.onPanUpdate});
+/// The drag surface + visual chrome for a control in edit mode: a border,
+/// a small corner badge (purely decorative now — the whole box is the
+/// touch target, not just the badge), and a scale/color pulse the instant
+/// a drag starts so a grab reads as an obvious, visible event rather than
+/// something you infer from the control having silently moved.
+class _DraggableControl extends StatefulWidget {
+  const _DraggableControl({required this.onPanUpdate, required this.child});
 
   final ValueChanged<Offset> onPanUpdate;
-
-  static const _size = 44.0;
-
-  @override
-  Widget build(BuildContext context) {
-    return _Grabbable(
-      onPanUpdate: onPanUpdate,
-      builder: (context, grabbed) {
-        final scheme = Theme.of(context).colorScheme;
-        return AnimatedScale(
-          scale: grabbed ? 1.2 : 1.0,
-          duration: const Duration(milliseconds: 120),
-          curve: Curves.easeOut,
-          child: Container(
-            width: _size,
-            height: _size,
-            decoration: BoxDecoration(
-              color: grabbed ? scheme.secondary : scheme.primary,
-              shape: BoxShape.circle,
-              boxShadow: grabbed
-                  ? [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.3),
-                        blurRadius: 6,
-                        offset: const Offset(0, 2),
-                      ),
-                    ]
-                  : null,
-            ),
-            child: Icon(Icons.drag_indicator,
-                size: _size * 0.5, color: scheme.onPrimary),
-          ),
-        );
-      },
-    );
-  }
-}
-
-/// Tracks pan-in-progress state for [_DragHandle]'s grab animation —
-/// separated from the handle's own (stateless) visuals so the animation
-/// styling stays trivial to read.
-class _Grabbable extends StatefulWidget {
-  const _Grabbable({required this.onPanUpdate, required this.builder});
-
-  final ValueChanged<Offset> onPanUpdate;
-  final Widget Function(BuildContext context, bool grabbed) builder;
+  final Widget child;
 
   @override
-  State<_Grabbable> createState() => _GrabbableState();
+  State<_DraggableControl> createState() => _DraggableControlState();
 }
 
-class _GrabbableState extends State<_Grabbable> {
+class _DraggableControlState extends State<_DraggableControl> {
   bool _grabbed = false;
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final color = _grabbed ? scheme.secondary : scheme.primary;
     return GestureDetector(
       onPanStart: (_) => setState(() => _grabbed = true),
       onPanUpdate: (details) => widget.onPanUpdate(details.delta),
       onPanEnd: (_) => setState(() => _grabbed = false),
       onPanCancel: () => setState(() => _grabbed = false),
-      child: widget.builder(context, _grabbed),
+      child: AnimatedScale(
+        scale: _grabbed ? 1.05 : 1.0,
+        duration: const Duration(milliseconds: 120),
+        curve: Curves.easeOut,
+        // No separate drag-indicator badge — the whole box is the drag
+        // surface now, so a corner icon only implied a smaller target than
+        // actually exists. A border-color change alone reads as "one of
+        // several similarly-outlined controls" once more than one has been
+        // touched, so a fill tint + shadow makes which one is *currently*
+        // being dragged unambiguous at a glance too.
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            color: _grabbed ? color.withValues(alpha: 0.15) : null,
+            border: Border.all(color: color, width: 2),
+            borderRadius: BorderRadius.circular(8),
+            boxShadow: _grabbed
+                ? [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.3),
+                      blurRadius: 10,
+                      offset: const Offset(0, 3),
+                    ),
+                  ]
+                : null,
+          ),
+          child: IgnorePointer(child: widget.child),
+        ),
+      ),
     );
   }
 }
