@@ -36,6 +36,7 @@ const (
 	eventSpoilersInc    uint32 = 13
 	eventSpoilersDec    uint32 = 14
 	eventSpoilersArmSet uint32 = 15
+	eventAutopilotOff   uint32 = 16
 
 	notificationGroup uint32 = 1
 
@@ -204,6 +205,7 @@ func setupEvents(client engine.Client) {
 	client.MapClientEventToSimEvent(eventSpoilersInc, "SPOILERS_INC")
 	client.MapClientEventToSimEvent(eventSpoilersDec, "SPOILERS_DEC")
 	client.MapClientEventToSimEvent(eventSpoilersArmSet, "SPOILERS_ARM_SET")
+	client.MapClientEventToSimEvent(eventAutopilotOff, "AUTOPILOT_OFF")
 
 	for _, id := range []uint32{
 		eventAxisElevator, eventAxisAileron, eventAxisRudder,
@@ -403,6 +405,17 @@ func (c *Client) SetSpoilersArmed(armed bool) error {
 	}
 	return c.transmit(eventSpoilersArmSet, data)
 }
+
+// DisconnectAutopilot fires AUTOPILOT_OFF — confirmed via
+// docs.flightsimulator.com's Aircraft Autopilot/Flight Assist Events page as
+// a real, documented explicit-off event ("Turns AP off"). Deliberately not
+// AP_MASTER or AUTOPILOT_DISENGAGE_TOGGLE: both are real too, but this
+// project has hit the toggle-unreliability class of bug twice already
+// (PAUSE_TOGGLE, SPOILERS_ARM_TOGGLE) — an explicit "off" event needs no
+// state to get out of sync with and can't accidentally re-engage the AP the
+// way a toggle could if fired twice (e.g. two of the 3x-redundant BUTTON
+// packets landing on either side of a state change).
+func (c *Client) DisconnectAutopilot() error { return c.transmit(eventAutopilotOff, 0) }
 
 func (c *Client) Close() error {
 	return c.mgr.Stop()
