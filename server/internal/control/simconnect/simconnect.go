@@ -28,6 +28,7 @@ const (
 	buttonSpoilerIncr  control.ButtonID = 7
 	buttonSpoilerDecr  control.ButtonID = 8
 	buttonSpoilerArm   control.ButtonID = 9
+	buttonAutopilotOff control.ButtonID = 10
 )
 
 type Backend struct {
@@ -139,6 +140,8 @@ func (b *Backend) SetButton(id control.ButtonID, pressed bool) error {
 		armed := b.spoilerArmed
 		b.spoilerArmedMu.Unlock()
 		return b.client.SetSpoilersArmed(armed)
+	case buttonAutopilotOff:
+		return b.client.DisconnectAutopilot()
 	default:
 		return fmt.Errorf("simconnect: unknown button %v", id)
 	}

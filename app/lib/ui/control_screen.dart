@@ -9,6 +9,7 @@ import '../network/protocol.dart' as proto;
 import '../network/udp_client.dart';
 import '../sensors/attitude.dart';
 import '../state/connection.dart';
+import '../state/controls_lock.dart';
 import '../state/layout.dart';
 import '../state/settings.dart';
 import '../state/slider_axis.dart';
@@ -28,6 +29,7 @@ class ButtonIds {
   static const int spoilerIncr = 7;
   static const int spoilerDecr = 8;
   static const int spoilerArm = 9;
+  static const int autopilotDisconnect = 10;
 }
 
 /// The primary flying screen, laid out to match docs/mhotas-mobile.png:
@@ -94,6 +96,11 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
   }
 
   void _sendAxis() {
+    // Locked: withhold AXIS entirely rather than send a frozen/neutral
+    // value ourselves — the server's own ~500ms failsafe already neutrals
+    // pitch/roll/rudder and holds throttle once packets stop arriving, so
+    // there's nothing to duplicate here.
+    if (ref.read(controlsLockedProvider)) return;
     final slider = ref.read(sliderAxisProvider);
     final manualJoystick = ref.read(manualJoystickProvider);
     ref.read(udpClientProvider).sendAxis(proto.Axis(
@@ -162,6 +169,7 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
     final telemetry = ref.watch(telemetryProvider).valueOrNull;
     final manualJoystick = ref.watch(manualJoystickProvider);
     final layoutEditMode = ref.watch(layoutEditModeProvider);
+    final controlsLocked = ref.watch(controlsLockedProvider);
 
     // Pause state comes from the sim's own Pause system event (TELEMETRY),
     // not a locally-guessed toggle — so an external pause/unpause (the Esc
@@ -229,166 +237,332 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
       body: SafeArea(
         child: Stack(
           children: [
-            Column(
-              children: [
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: Padding(
-                    padding: const EdgeInsets.only(left: 16),
-                    child: _Movable(
-                      id: 'statusTiles',
-                      child: _StatusTilesRow(
-                          kinds: _tileKinds, telemetry: telemetry),
+            // Everything except the lock slide itself goes inert while
+            // locked — _sendAxis already stops sending on its own, but a
+            // stray touch shouldn't fire a BUTTON either. The slide is a
+            // later sibling of this IgnorePointer (below), so it paints on
+            // top and stays interactive no matter what.
+            IgnorePointer(
+              ignoring: controlsLocked,
+              child: Stack(children: [
+                Column(
+                  children: [
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Padding(
+                        padding: const EdgeInsets.only(left: 16),
+                        child: _Movable(
+                          id: 'statusTiles',
+                          child: _StatusTilesRow(
+                              kinds: _tileKinds, telemetry: telemetry),
+                        ),
+                      ),
+                    ),
+                    Expanded(
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Align(
+                              // topCenter, not Center: this Row's siblings are
+                              // all top-aligned (Row's own default cross-axis
+                              // behavior for them), but attitude's extra
+                              // trailing caption text made this the one item
+                              // tall enough for full vertical centering to
+                              // actually matter — it drifted down far enough
+                              // to visually collide with the bottom-anchored
+                              // rudder control once rudder was widened,
+                              // found live.
+                              alignment: Alignment.topCenter,
+                              child: _Movable(
+                                id: 'attitude',
+                                child: manualJoystick
+                                    ? _ManualJoystick(
+                                        onChanged: (v) =>
+                                            setState(() => _joystick = v))
+                                    : _TiltIndicator(attitude: _attitude),
+                              ),
+                            ),
+                          ),
+                          Padding(
+                            padding: const EdgeInsets.only(right: 8),
+                            child: _Movable(
+                              id: 'speedbrake',
+                              child: _ControlLabel(
+                                label: 'SPEEDBRAKE',
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    _BigButton(
+                                      label: 'ARM',
+                                      onTap: _toggleSpeedbrakeArm,
+                                      active: _speedbrakeArmed,
+                                      compact: true,
+                                    ),
+                                    const SizedBox(height: 8),
+                                    _SpeedbrakeLever(onStep: _stepSpeedbrake),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                          Padding(
+                            padding: const EdgeInsets.only(right: 8),
+                            child: _Movable(
+                              id: 'flapLever',
+                              child: _FlapLever(
+                                onStep: (steps) => _stepFlaps(steps),
+                                synced: telemetry?.flapHandleIndex,
+                                max: telemetry?.flapHandleIndexMax,
+                              ),
+                            ),
+                          ),
+                          Padding(
+                            padding: const EdgeInsets.only(right: 8),
+                            child: _Movable(
+                              id: 'toeBrake',
+                              child: _ControlLabel(
+                                label: 'TOE BRAKE',
+                                child: _ToeBrake(
+                                  onPressedChanged: (pressed) =>
+                                      _sendButton(ButtonIds.toeBrake, pressed),
+                                ),
+                              ),
+                            ),
+                          ),
+                          Padding(
+                            padding: const EdgeInsets.only(right: 8),
+                            child: _Movable(
+                              id: 'parkingBrake',
+                              child: _ControlLabel(
+                                label: 'PARK BRAKE',
+                                child: _ParkingBrakeButton(
+                                  active: telemetry?.parkingBrakeSet ?? false,
+                                  onTap: () =>
+                                      _tapButton(ButtonIds.parkingBrake),
+                                ),
+                              ),
+                            ),
+                          ),
+                          Padding(
+                            padding: const EdgeInsets.only(right: 8),
+                            child: _Movable(
+                              id: 'gear',
+                              child: _ControlLabel(
+                                label: 'GEAR',
+                                child: _GearToggle(
+                                  position: telemetry?.gearPosition,
+                                  onTap: () => _tapButton(ButtonIds.gear),
+                                ),
+                              ),
+                            ),
+                          ),
+                          Padding(
+                            padding: const EdgeInsets.only(right: 8),
+                            child: _Movable(
+                              id: 'autopilotDisconnect',
+                              child: _ControlLabel(
+                                label: 'AP DISC',
+                                child: _AutopilotDisconnectButton(
+                                  onTap: () =>
+                                      _tapButton(ButtonIds.autopilotDisconnect),
+                                ),
+                              ),
+                            ),
+                          ),
+                          _Movable(
+                            id: 'throttle',
+                            child: _ControlLabel(
+                              label: 'THROTTLE',
+                              child: _ThrottleLever(
+                                onChanged: (v) => ref
+                                    .read(sliderAxisProvider.notifier)
+                                    .setThrottle(v),
+                                synced: telemetry?.throttlePercent,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                Positioned(
+                  left: 16,
+                  bottom: 16,
+                  child: _Movable(
+                    id: 'rudder',
+                    child: _ControlLabel(
+                      label: 'RUDDER',
+                      horizontal: true,
+                      child: _RudderStick(
+                        onChanged: (v) =>
+                            ref.read(sliderAxisProvider.notifier).setRudder(v),
+                      ),
                     ),
                   ),
                 ),
-                Expanded(
-                  child: Row(
+                // bottom, not top: the status tiles row sits flush at the top of
+                // the Column with no clearance, so a top-pinned hint painted
+                // over it there — caught live via a real-device screenshot.
+                if (layoutEditMode)
+                  const Positioned(
+                    bottom: 8,
+                    left: 0,
+                    right: 0,
+                    child: IgnorePointer(
+                      child: Center(
+                        child: Text(
+                          'Drag a control anywhere to reposition it · tap the layout icon to lock',
+                          style: TextStyle(fontSize: 12),
+                        ),
+                      ),
+                    ),
+                  ),
+              ]),
+            ),
+            _ControlsLockSlide(
+              locked: controlsLocked,
+              onLockedChanged: (v) =>
+                  ref.read(controlsLockedProvider.notifier).state = v,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Floating "slide to lock/unlock controls" bar — always visible at the
+/// bottom of the screen, painted above every other control (it's the last
+/// child of the body's outer `Stack` in `ControlScreen.build`, so nothing
+/// can ever cover it) — requested directly, with the placement and
+/// "floating, highest z-index" spec'd exactly that way.
+///
+/// A slide, not a tap button, specifically so an incidental brush while
+/// flying can't trigger it: committing needs deliberate, sustained motion
+/// most of the way across the track (`_commitThreshold`), not a single
+/// touch — the same anti-accidental-trigger idea "slide to power off"
+/// uses. A plain tap never moves `_dragProgress` off null, so
+/// `_onDragEnd` sees it sitting exactly at the current resting value and
+/// does nothing.
+///
+/// Locking withholds *this app's* outgoing AXIS/BUTTON traffic (see
+/// `_ControlScreenState._sendAxis` and the `IgnorePointer` wrapping the
+/// rest of the body in `build`) — distinct from the separate app-bar Pause
+/// button, which pauses the sim itself (`PAUSE_SET`). No protocol change
+/// needed: the server's own ~500ms AXIS-timeout failsafe already neutrals
+/// pitch/roll/rudder and holds throttle once packets stop arriving.
+class _ControlsLockSlide extends StatefulWidget {
+  const _ControlsLockSlide(
+      {required this.locked, required this.onLockedChanged});
+
+  final bool locked;
+  final ValueChanged<bool> onLockedChanged;
+
+  @override
+  State<_ControlsLockSlide> createState() => _ControlsLockSlideState();
+}
+
+class _ControlsLockSlideState extends State<_ControlsLockSlide> {
+  // Live drag position while a finger is down, 0 (unlocked rest) .. 1
+  // (locked rest) — null when not dragging, in which case the thumb sits
+  // at whatever widget.locked's own resting position is.
+  double? _dragProgress;
+  double _trackWidth = 1;
+
+  static const _commitThreshold = 0.8;
+
+  double get _restProgress => widget.locked ? 1.0 : 0.0;
+
+  void _onDragUpdate(DragUpdateDetails details) {
+    setState(() {
+      final delta = details.delta.dx / _trackWidth;
+      _dragProgress =
+          ((_dragProgress ?? _restProgress) + delta).clamp(0.0, 1.0);
+    });
+  }
+
+  void _endDrag() {
+    final progress = _dragProgress ?? _restProgress;
+    final crossedToLocked = !widget.locked && progress >= _commitThreshold;
+    final crossedToUnlocked = widget.locked && progress <= 1 - _commitThreshold;
+    setState(() => _dragProgress = null);
+    if (crossedToLocked) {
+      widget.onLockedChanged(true);
+    } else if (crossedToUnlocked) {
+      widget.onLockedChanged(false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final progress = _dragProgress ?? _restProgress;
+    final animated = _dragProgress == null;
+    return Positioned(
+      left: 0,
+      right: 0,
+      bottom: 8,
+      // Centered and narrower than the rudder bar (240px) — requested
+      // directly, after the first pass spanned nearly the full width.
+      child: Center(
+        child: SizedBox(
+          width: 200,
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              _trackWidth = constraints.maxWidth;
+              return GestureDetector(
+                onHorizontalDragUpdate: _onDragUpdate,
+                onHorizontalDragEnd: (_) => _endDrag(),
+                onHorizontalDragCancel: _endDrag,
+                child: AnimatedContainer(
+                  duration: animated
+                      ? const Duration(milliseconds: 150)
+                      : Duration.zero,
+                  height: 48,
+                  decoration: BoxDecoration(
+                    color: widget.locked
+                        ? scheme.primaryContainer
+                        : scheme.surfaceContainerHighest,
+                    borderRadius: BorderRadius.circular(24),
+                  ),
+                  child: Stack(
+                    alignment: Alignment.center,
                     children: [
-                      Expanded(
-                        child: Align(
-                          // topCenter, not Center: this Row's siblings are
-                          // all top-aligned (Row's own default cross-axis
-                          // behavior for them), but attitude's extra
-                          // trailing caption text made this the one item
-                          // tall enough for full vertical centering to
-                          // actually matter — it drifted down far enough
-                          // to visually collide with the bottom-anchored
-                          // rudder control once rudder was widened,
-                          // found live.
-                          alignment: Alignment.topCenter,
-                          child: _Movable(
-                            id: 'attitude',
-                            child: manualJoystick
-                                ? _ManualJoystick(
-                                    onChanged: (v) =>
-                                        setState(() => _joystick = v))
-                                : _TiltIndicator(attitude: _attitude),
-                          ),
+                      Text(
+                        widget.locked ? 'Slide to unlock' : 'Slide to lock',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: widget.locked
+                              ? scheme.onPrimaryContainer
+                              : scheme.onSurfaceVariant,
                         ),
                       ),
-                      Padding(
-                        padding: const EdgeInsets.only(right: 8),
-                        child: _Movable(
-                          id: 'speedbrake',
-                          child: _ControlLabel(
-                            label: 'SPEEDBRAKE',
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                _BigButton(
-                                  label: 'ARM',
-                                  onTap: _toggleSpeedbrakeArm,
-                                  active: _speedbrakeArmed,
-                                  compact: true,
-                                ),
-                                const SizedBox(height: 8),
-                                _SpeedbrakeLever(onStep: _stepSpeedbrake),
-                              ],
-                            ),
+                      AnimatedAlign(
+                        duration: animated
+                            ? const Duration(milliseconds: 150)
+                            : Duration.zero,
+                        alignment: Alignment(progress * 2 - 1, 0),
+                        child: Container(
+                          width: 40,
+                          height: 40,
+                          margin: const EdgeInsets.symmetric(horizontal: 4),
+                          decoration: BoxDecoration(
+                            color: scheme.primary,
+                            shape: BoxShape.circle,
                           ),
-                        ),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.only(right: 8),
-                        child: _Movable(
-                          id: 'flapLever',
-                          child: _FlapLever(
-                            onStep: (steps) => _stepFlaps(steps),
-                            synced: telemetry?.flapHandleIndex,
-                            max: telemetry?.flapHandleIndexMax,
-                          ),
-                        ),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.only(right: 8),
-                        child: _Movable(
-                          id: 'toeBrake',
-                          child: _ControlLabel(
-                            label: 'TOE BRAKE',
-                            child: _ToeBrake(
-                              onPressedChanged: (pressed) =>
-                                  _sendButton(ButtonIds.toeBrake, pressed),
-                            ),
-                          ),
-                        ),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.only(right: 8),
-                        child: _Movable(
-                          id: 'parkingBrake',
-                          child: _ControlLabel(
-                            label: 'PARK BRAKE',
-                            child: _ParkingBrakeButton(
-                              active: telemetry?.parkingBrakeSet ?? false,
-                              onTap: () => _tapButton(ButtonIds.parkingBrake),
-                            ),
-                          ),
-                        ),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.only(right: 8),
-                        child: _Movable(
-                          id: 'gear',
-                          child: _ControlLabel(
-                            label: 'GEAR',
-                            child: _GearToggle(
-                              position: telemetry?.gearPosition,
-                              onTap: () => _tapButton(ButtonIds.gear),
-                            ),
-                          ),
-                        ),
-                      ),
-                      _Movable(
-                        id: 'throttle',
-                        child: _ControlLabel(
-                          label: 'THROTTLE',
-                          child: _ThrottleLever(
-                            onChanged: (v) => ref
-                                .read(sliderAxisProvider.notifier)
-                                .setThrottle(v),
-                            synced: telemetry?.throttlePercent,
+                          child: Icon(
+                            widget.locked ? Icons.lock : Icons.lock_open,
+                            color: scheme.onPrimary,
                           ),
                         ),
                       ),
                     ],
                   ),
                 ),
-              ],
-            ),
-            Positioned(
-              left: 16,
-              bottom: 16,
-              child: _Movable(
-                id: 'rudder',
-                child: _ControlLabel(
-                  label: 'RUDDER',
-                  horizontal: true,
-                  child: _RudderStick(
-                    onChanged: (v) =>
-                        ref.read(sliderAxisProvider.notifier).setRudder(v),
-                  ),
-                ),
-              ),
-            ),
-            // bottom, not top: the status tiles row sits flush at the top of
-            // the Column with no clearance, so a top-pinned hint painted
-            // over it there — caught live via a real-device screenshot.
-            if (layoutEditMode)
-              const Positioned(
-                bottom: 8,
-                left: 0,
-                right: 0,
-                child: IgnorePointer(
-                  child: Center(
-                    child: Text(
-                      'Drag a control anywhere to reposition it · tap the layout icon to lock',
-                      style: TextStyle(fontSize: 12),
-                    ),
-                  ),
-                ),
-              ),
-          ],
+              );
+            },
+          ),
         ),
       ),
     );
@@ -712,6 +886,40 @@ class _ParkingBrakeButton extends StatelessWidget {
         alignment: Alignment.center,
         child: Icon(Icons.local_parking,
             color: active ? scheme.onPrimary : scheme.onSurface),
+      ),
+    );
+  }
+}
+
+/// Momentary autopilot-disconnect action (AUTOPILOT_OFF, see the server's
+/// simlink.Client.DisconnectAutopilot). Always red (scheme.error), not just
+/// on press like _ToeBrake — requested directly, and matches real cockpit
+/// convention for a disconnect/warning control: it should read as
+/// "important" at a glance, not just while you're touching it. No
+/// telemetry field exists for AP-engaged state (same gap as the speedbrake
+/// arm toggle), so this is a plain one-shot action button, not a stateful
+/// toggle — Material's own FilledButton press feedback is all the
+/// affordance a momentary action needs.
+class _AutopilotDisconnectButton extends StatelessWidget {
+  const _AutopilotDisconnectButton({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return SizedBox(
+      width: 72,
+      height: 72,
+      child: FilledButton(
+        onPressed: onTap,
+        style: FilledButton.styleFrom(
+          backgroundColor: scheme.error,
+          foregroundColor: scheme.onError,
+          shape: const CircleBorder(),
+          padding: EdgeInsets.zero,
+        ),
+        child: const Text('AP', style: TextStyle(fontWeight: FontWeight.bold)),
       ),
     );
   }

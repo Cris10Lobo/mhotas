@@ -38,16 +38,18 @@ extension StatusTileKindDisplay on StatusTileKind {
   /// has arrived yet.
   String valueOf(proto.Telemetry? t) {
     if (t == null) return '--';
-    switch (this) {
-      case StatusTileKind.airspeed:
-        return t.airspeedKnots.round().toString();
-      case StatusTileKind.altitude:
-        return t.altitudeFeet.round().toString();
-      case StatusTileKind.heading:
-        return t.headingDegrees.round().toString();
-      case StatusTileKind.verticalSpeed:
-        return t.verticalSpeedFpm.round().toString();
-    }
+    final raw = switch (this) {
+      StatusTileKind.airspeed => t.airspeedKnots,
+      StatusTileKind.altitude => t.altitudeFeet,
+      StatusTileKind.heading => t.headingDegrees,
+      StatusTileKind.verticalSpeed => t.verticalSpeedFpm,
+    };
+    // Crashed live: double.round() throws on NaN/Infinity, and a real sim
+    // can report exactly that for some simvars in certain states (e.g.
+    // before the flight model has fully loaded) — treat it the same as no
+    // reading yet rather than taking the whole screen down.
+    if (!raw.isFinite) return '--';
+    return raw.round().toString();
   }
 }
 
