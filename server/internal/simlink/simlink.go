@@ -348,7 +348,8 @@ func (c *Client) SetInputEvent(name string, value float64) error {
 // arithmetic rather than by indexing the Go array (which would panic past
 // its declared length of 1).
 func (c *Client) watchInputEvents(messages <-chan engine.Message) {
-	descSize := unsafe.Sizeof(types.SIMCONNECT_INPUT_EVENT_DESCRIPTOR{})
+	declaredSize := unsafe.Sizeof(types.SIMCONNECT_INPUT_EVENT_DESCRIPTOR{})
+	headerSize := unsafe.Sizeof(types.SIMCONNECT_RECV_LIST_TEMPLATE{})
 	for msg := range messages {
 		if msg.Err != nil {
 			c.log.Warn("input event enumeration message error", "err", msg.Err)
@@ -358,11 +359,41 @@ func (c *Client) watchInputEvents(messages <-chan engine.Message) {
 		if recv == nil || uint32(recv.DwRequestID) != reqInputEvents {
 			continue
 		}
-		base := unsafe.Pointer(&recv.RgData[0])
 		arraySize := int(recv.DwArraySize)
+		if arraySize == 0 {
+			continue
+		}
+
+		// The real per-entry wire stride doesn't necessarily match this
+		// binding's declared SIMCONNECT_INPUT_EVENT_DESCRIPTOR size — hit
+		// live against a real aircraft (a big airliner add-on) with a
+		// naive fixed-size walk and it corrupted progressively worse
+		// entry-by-entry before eventually segfaulting past the message
+		// buffer. guide-facilities.md documents this exact class of
+		// mismatch for a sibling list struct ("the Go struct has alignment
+		// padding that does not match the SimConnect wire format") and
+		// derives the real stride from the message size instead of
+		// trusting unsafe.Sizeof — same fix applied here, plus a hard
+		// bounds check on every read so a still-wrong stride guess can
+		// never walk off the buffer again.
+		base := unsafe.Pointer(recv)
+		dataStart := unsafe.Add(base, headerSize)
+		bufEnd := uintptr(base) + uintptr(msg.Size)
+		stride := (bufEnd - uintptr(dataStart)) / uintptr(arraySize)
+		if stride == 0 || stride > declaredSize {
+			c.log.Warn("input event enumeration: unexpected entry stride, skipping batch",
+				"stride", stride, "declared", declaredSize, "arraySize", arraySize, "msgSize", msg.Size)
+			continue
+		}
+
 		found := make(map[string]uint64, arraySize)
 		for i := range arraySize {
-			desc := (*types.SIMCONNECT_INPUT_EVENT_DESCRIPTOR)(unsafe.Add(base, uintptr(i)*descSize))
+			entry := unsafe.Add(dataStart, uintptr(i)*stride)
+			if uintptr(entry)+declaredSize > bufEnd {
+				c.log.Warn("input event enumeration: entry would read past message buffer, stopping batch", "index", i)
+				break
+			}
+			desc := (*types.SIMCONNECT_INPUT_EVENT_DESCRIPTOR)(entry)
 			name := engine.BytesToString(desc.Name[:])
 			hash := uint64(desc.Hash)
 			found[name] = hash
