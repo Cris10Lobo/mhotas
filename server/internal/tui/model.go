@@ -43,6 +43,7 @@ type Model struct {
 	banner string // rendered once at startup, static for the process lifetime
 
 	connectAddr string
+	altAddrs    []string // fallback candidates if connectAddr turns out unreachable
 	qr          string
 	qrErr       error
 
@@ -67,12 +68,15 @@ func New(srv *transport.Server, backend control.Output, tail *LogTail) Model {
 		m.banner = banner
 	}
 
-	ip, err := localIPv4()
+	ip, alts, err := localIPv4()
 	if err != nil {
 		m.qrErr = err
 		return m
 	}
 	m.connectAddr = fmt.Sprintf("%s:%d", ip, srv.Addr().Port)
+	for _, alt := range alts {
+		m.altAddrs = append(m.altAddrs, fmt.Sprintf("%s:%d", alt, srv.Addr().Port))
+	}
 	m.qr, m.qrErr = connectQR(m.connectAddr)
 	return m
 }
@@ -160,19 +164,43 @@ func (m Model) topBlock() string {
 		connectPane = fmt.Sprintf("QR unavailable: %s\n\nEnter the server's address\nmanually in the app.", m.qrErr)
 	} else {
 		connectPane = m.qr + "\nScan to connect: " + m.connectAddr
+		if len(m.altAddrs) > 0 {
+			connectPane += "\nStuck on Connecting? Try: " + strings.Join(m.altAddrs, ", ")
+		}
 	}
 
 	status := m.srv.Status()
 	ready := m.backend.Ready()
-	statusPane := strings.Join([]string{
-		"Backend:  " + m.backend.Name(),
-		"Sim:      " + dot(ready) + " " + simLabel(ready),
-		"Phone:    " + dot(status.DeviceConnected) + " " + phoneLabel(status),
-	}, "\n")
+	textBlock := "Backend:  " + m.backend.Name() + "\n" +
+		"Sim:      " + simLabel(ready) + "\n" +
+		"Phone:    " + phoneLabel(status)
+
+	qrPane := paneStyle.Render(connectPane)
+	// Match the QR box's footprint rather than letting the status box
+	// auto-size to its own (shorter, narrower) content — border+padding
+	// account for 4 of the QR pane's total width (1 char of border plus 1
+	// of padding on each side) but only 2 of its height (Padding(0, 1) has
+	// no vertical component), same as paneStyle applies to both panes here.
+	innerWidth := lipgloss.Width(qrPane) - 4
+	innerHeight := lipgloss.Height(qrPane) - 2
+
+	diagram := lipgloss.NewStyle().Width(innerWidth).Align(lipgloss.Center).
+		Render(statusDiagram(ready, status.DeviceConnected))
+
+	// Diagram vertically centered in the space above the text (it's the
+	// icon), Backend/Sim/Phone pinned to the bottom and left-aligned (it's
+	// a readout) — the split top/bottom filler is what stretches the box
+	// to the QR box's full height instead of shrink-wrapping its own
+	// content, while keeping the diagram centered rather than top-pinned.
+	remaining := max(innerHeight-lipgloss.Height(textBlock), 0)
+	topFiller := max((remaining-lipgloss.Height(diagram))/2, 0)
+	bottomFiller := max(remaining-lipgloss.Height(diagram)-topFiller, 0)
+	statusContent := strings.Repeat("\n", topFiller) + diagram +
+		strings.Repeat("\n", bottomFiller+1) + textBlock
 
 	return lipgloss.JoinHorizontal(lipgloss.Top,
-		paneStyle.Render(connectPane),
-		paneStyle.Render(statusPane),
+		qrPane,
+		paneStyle.Width(innerWidth).Render(statusContent),
 	)
 }
 
@@ -185,6 +213,46 @@ func (m Model) View() string {
 	}
 	return m.headerBlock() + "\n\n" + m.topBlock() +
 		"\n\n" + dimStyle.Render("Recent activity") + "\n" + m.logs.View()
+}
+
+// statusDiagram renders the sim and phone links as two Airbus-overhead-
+// panel-style sources whose lines converge into one bus-tie indicator —
+// "online" means both sources are actually live, not just that a line
+// reached the connector. Example/prototype for the equivalent widget
+// planned for control_screen.dart; ASCII here needed no wire-protocol
+// change since both booleans are already local to the server process.
+func statusDiagram(simReady, phoneOnline bool) string {
+	bothOnline := simReady && phoneOnline
+	busLabel := waitStyle.Render("OFFLINE")
+	if bothOnline {
+		busLabel = okStyle.Render("ONLINE")
+	}
+	rows := []string{
+		lipgloss.PlaceHorizontal(9, lipgloss.Center, "SIM") + "   " +
+			lipgloss.PlaceHorizontal(9, lipgloss.Center, "PHONE"),
+		lipgloss.PlaceHorizontal(9, lipgloss.Center, dot(simReady)) + "   " +
+			lipgloss.PlaceHorizontal(9, lipgloss.Center, dot(phoneOnline)),
+		"    │           │",
+		"    └─────┬─────┘",
+		"          │",
+		"        " + dot(bothOnline) + " " + busLabel,
+	}
+	// Rows are hand-aligned to each other by their raw column offsets (the
+	// lines/dots only line up because every row starts at column 0), which
+	// a later per-line lipgloss.Align(Center) on the whole pane would wreck
+	// — it centers each line to its own width, and these rows aren't the
+	// same width. Right-padding every row to the widest one first means
+	// that centering step shifts them all by the same amount instead.
+	width := 0
+	for _, r := range rows {
+		if w := lipgloss.Width(r); w > width {
+			width = w
+		}
+	}
+	for i, r := range rows {
+		rows[i] = lipgloss.PlaceHorizontal(width, lipgloss.Left, r)
+	}
+	return strings.Join(rows, "\n")
 }
 
 func dot(ok bool) string {
