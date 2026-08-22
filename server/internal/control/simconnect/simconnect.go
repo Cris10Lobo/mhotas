@@ -3,78 +3,44 @@
 // Package simconnect implements control.Output by driving MSFS2024
 // through SimConnect, via server/internal/simlink. Validated against a
 // live MSFS2024 session.
+//
+// SetAxis/SetButton contain no per-control branching: Backend wraps a
+// control.MappedOutput built from this package's driver factory (see
+// drivers.go) plus the effective control mapping (defaultMappings,
+// overridden per-name by config.Config.Controls) — the same
+// interfaces-and-configuration shape a future vjoy backend would use.
 package simconnect
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
-	"sync"
 
+	"mhotas/internal/config"
 	"mhotas/internal/control"
 	"mhotas/internal/simlink"
 )
 
-// MVP button IDs, matching app/lib/ui/control_screen.dart's ButtonIds. A
-// config-driven mapping (more buttons, user-remappable) is a later-phase
-// addition; this fixed set covers the MVP button row.
-const (
-	buttonGear         control.ButtonID = 1
-	buttonParkingBrake control.ButtonID = 2
-	buttonPause        control.ButtonID = 3
-	buttonFlapIncr     control.ButtonID = 4
-	buttonFlapDecr     control.ButtonID = 5
-	buttonToeBrake     control.ButtonID = 6
-	buttonSpoilerIncr  control.ButtonID = 7
-	buttonSpoilerDecr  control.ButtonID = 8
-	buttonSpoilerArm   control.ButtonID = 9
-	buttonAutopilotOff control.ButtonID = 10
-)
-
 type Backend struct {
 	client *simlink.Client
-	log    *slog.Logger
-
-	// reverseArmed tracks whether we've fired SET_REVERSE_THRUST_ON, so
-	// syncThrottle only fires the arm/disarm event on a sign transition,
-	// not every packet. Throttle's failsafe policy defaults to "hold" (see
-	// transport.applyFailsafe), in which case SetAxis for throttle is only
-	// ever called from transport's single packet-handling goroutine — but
-	// that policy is operator-configurable, and if throttle's failsafe is
-	// set to "neutral", the failsafe loop's own goroutine can call SetAxis
-	// concurrently with it, so this needs its own lock rather than relying
-	// on that assumption holding.
-	reverseArmedMu sync.Mutex
-	reverseArmed   bool
-
-	// spoilerArmed tracks whether the spoiler ARM button has been toggled
-	// on, the same locally-tracked-state pattern as reverseArmed above.
-	// Unlike reverseArmed, there's no telemetry readback to correct against
-	// here (no spoilersArmed field exists yet — that would be a protocol
-	// change, out of scope for this milestone) and SPOILERS_ARM_SET always
-	// takes an explicit value rather than toggling, so this is purely this
-	// button's own on/off memory, not a mirror of the sim's real state.
-	//
-	// ponytail: this can drift from the app's own independent copy of the
-	// same bool (control_screen.dart's _speedbrakeArmed) — a server restart,
-	// an app restart, or a dropped 3x-redundant BUTTON packet leaves one
-	// side's guess wrong with nothing to reconcile it. Add spoilersArmed to
-	// TELEMETRY (matching parkingBrakeSet/paused's readback pattern) if this
-	// bites in practice.
-	spoilerArmedMu sync.Mutex
-	spoilerArmed   bool
+	out    *control.MappedOutput
 }
 
 // New connects to MSFS2024 in the background (auto-reconnecting if the
 // sim isn't running yet) and returns immediately with a usable Backend.
 // SetAxis/SetButton calls made before MSFS2024 is reachable return a
 // non-fatal error, which the transport layer already logs and continues
-// past.
-func New(ctx context.Context, log *slog.Logger) (*Backend, error) {
-	return &Backend{client: simlink.Connect(ctx, log), log: log}, nil
+// past. controls overrides the backend's default control mapping by name
+// (see defaultMappings) — nil/empty reproduces today's behavior exactly.
+func New(ctx context.Context, log *slog.Logger, controls map[string]config.ControlMapping) (*Backend, error) {
+	client := simlink.Connect(ctx, log)
+	out, err := buildMappedOutput(client, log, controls)
+	if err != nil {
+		return nil, err
+	}
+	return &Backend{client: client, out: out}, nil
 }
 
-func (b *Backend) Name() string { return "simconnect" }
+func (b *Backend) Name() string { return b.out.Name() }
 
 // SimlinkClient exposes the underlying SimConnect connection so
 // cmd/mhotas-server can share it with telemetry.Source — one connection
@@ -82,110 +48,21 @@ func (b *Backend) Name() string { return "simconnect" }
 func (b *Backend) SimlinkClient() *simlink.Client { return b.client }
 
 func (b *Backend) SetAxis(axis control.AxisID, value float64) error {
-	switch axis {
-	case control.AxisPitch:
-		// AXIS_ELEVATOR_SET's positive value is nose-down — confirmed
-		// against a live sim (matches the documented SimConnect/
-		// aeronautical convention). mHOTAS's own convention is
-		// positive pitch = climb, so the sign is flipped here rather than
-		// in calibration.Curve.Invert, since this is a fixed fact about
-		// SimConnect, not a user preference.
-		return b.client.SetElevator(toAxisRange(-value))
-	case control.AxisRoll:
-		return b.client.SetAileron(toAxisRange(value))
-	case control.AxisThrottle:
-		return b.syncThrottle(value)
-	case control.AxisRudder:
-		return b.client.SetRudder(toAxisRange(value))
-	default:
-		return fmt.Errorf("simconnect: unknown axis %v", axis)
-	}
+	return b.out.SetAxis(axis, value)
 }
 
 func (b *Backend) SetButton(id control.ButtonID, pressed bool) error {
-	// Toe brake is momentary (apply while held, release on lift), unlike
-	// gear/parking brake/pause which are all press-only toggles — so it
-	// needs the release edge and must run before the !pressed early return.
-	if id == buttonToeBrake {
-		return b.client.SetToeBrakes(pressed)
-	}
-	if !pressed {
-		return nil // gear/parking brake/pause/flaps/spoiler buttons all act on press only
-	}
-	switch id {
-	case buttonGear:
-		return b.client.ToggleGear()
-	case buttonParkingBrake:
-		return b.client.ToggleParkingBrake()
-	case buttonFlapIncr:
-		return b.client.IncrFlaps()
-	case buttonFlapDecr:
-		return b.client.DecrFlaps()
-	case buttonPause:
-		// PAUSE_SET needs an explicit target, not a toggle (see
-		// simlink.Client.SetPause) — flip whatever SimConnect's own Pause
-		// event last reported, not a locally-tracked guess.
-		return b.client.SetPause(!b.client.Paused())
-	case buttonSpoilerIncr:
-		return b.client.IncrSpoilers()
-	case buttonSpoilerDecr:
-		return b.client.DecrSpoilers()
-	case buttonSpoilerArm:
-		// SPOILERS_ARM_SET takes an explicit value, not a toggle (see
-		// simlink.Client.SetSpoilersArmed) — but unlike pause there's no
-		// telemetry readback to flip against, so this button toggles its
-		// own locally-tracked state instead.
-		b.spoilerArmedMu.Lock()
-		b.spoilerArmed = !b.spoilerArmed
-		armed := b.spoilerArmed
-		b.spoilerArmedMu.Unlock()
-		return b.client.SetSpoilersArmed(armed)
-	case buttonAutopilotOff:
-		return b.client.DisconnectAutopilot()
-	default:
-		return fmt.Errorf("simconnect: unknown button %v", id)
-	}
+	return b.out.SetButton(id, pressed)
 }
 
 // Ready reports whether the underlying SimConnect connection has completed
 // its handshake with MSFS2024 — see simlink.Client.Ready.
 func (b *Backend) Ready() bool {
-	return b.client.Ready()
+	return b.out.Ready()
 }
 
 func (b *Backend) Close() error {
-	return b.client.Close()
-}
-
-// syncThrottle drives forward and reverse thrust through a single
-// consistent path — SetThrottle (THROTTLE_AXIS_SET_EX1) for the
-// continuous value, ToggleReverseThrust to arm/disarm on a sign
-// transition — confirmed correct via an Asobo developer forum post
-// (devsupport.flightsimulator.com/t/throttle-set-event-ids-explanation/
-// 4571). Once armed, MSFS applies the same idle..full raw magnitude as
-// negative (reverse) power internally; we never send a negative raw value
-// ourselves. Deliberately does NOT mix in the plain AXIS_THROTTLE_SET
-// event or the separate SET_REVERSE_THRUST_ON/OFF flag — either one
-// confirmed live to leave the engine stuck unable to return to forward
-// thrust after a reverse pull, since they don't reconcile with EX1's own
-// armed state.
-func (b *Backend) syncThrottle(value float64) error {
-	wantReverse := value < 0
-	b.reverseArmedMu.Lock()
-	if wantReverse != b.reverseArmed {
-		if err := b.client.ToggleReverseThrust(); err != nil {
-			b.log.Warn("reverse thrust arm failed", "err", err, "want", wantReverse)
-		} else {
-			b.log.Info("reverse thrust", "armed", wantReverse)
-			b.reverseArmed = wantReverse
-		}
-	}
-	b.reverseArmedMu.Unlock()
-	magnitude := value
-	if wantReverse {
-		magnitude = -value
-	}
-	return b.client.SetThrottle(toThrottleRaw(magnitude, simlink.AxisRange))
+	return b.out.Close()
 }
 
 // toAxisRange maps a calibrated -1..1 value to SimConnect's

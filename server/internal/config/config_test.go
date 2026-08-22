@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -11,7 +12,7 @@ func TestLoadMissingPathReturnsDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if got != Default() {
+	if !reflect.DeepEqual(got, Default()) {
 		t.Fatalf("Load with missing file = %+v, want Default()", got)
 	}
 }
@@ -21,7 +22,7 @@ func TestLoadEmptyPathReturnsDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if got != Default() {
+	if !reflect.DeepEqual(got, Default()) {
 		t.Fatalf("Load(\"\") = %+v, want Default()", got)
 	}
 }

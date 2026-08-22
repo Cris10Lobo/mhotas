@@ -12,7 +12,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
+	"sync"
 	"sync/atomic"
+	"unsafe"
 
 	"github.com/mrlm-net/simconnect/pkg/engine"
 	"github.com/mrlm-net/simconnect/pkg/manager"
@@ -48,6 +51,16 @@ const (
 	// parking brake state.
 	defAircraftState uint32 = 100
 	reqAircraftState uint32 = 200
+
+	// reqInputEvents is EnumerateInputEvents' request ID — must be in
+	// SimConnect's "user range" (1–999,999,849), clear of the fixed pair
+	// above.
+	reqInputEvents uint32 = 400
+
+	// genericEventBase is the first client event ID handed out by
+	// RegisterEvent, for config-declared K:EVENT names beyond the fixed set
+	// above — clear of both that set and the telemetry request IDs.
+	genericEventBase uint32 = 1000
 )
 
 // Client wraps a live, auto-reconnecting SimConnect connection. SetXxx
@@ -60,6 +73,22 @@ type Client struct {
 	ready  atomic.Bool
 	paused atomic.Bool
 	state  atomic.Value // holds AircraftState
+
+	// genericEvents backs RegisterEvent/TransmitNamed: config-declared
+	// K:EVENT names, assigned a stable client event ID up front (safe to
+	// call before the first connection) and (re-)mapped to that ID inside
+	// setupEvents on every StateConnected, same as the fixed events above.
+	genericEventsMu sync.Mutex
+	genericEvents   map[string]uint32
+	nextGenericID   uint32
+
+	// inputEvents caches the current session's Input Event name->hash
+	// enumeration (see watchInputEvents) — cleared and rebuilt on every
+	// StateConnected, since hashes are session-scoped and must never be
+	// reused across a reconnect or aircraft change (confirmed in the
+	// mrlm-net/simconnect manager docs).
+	inputEventsMu sync.Mutex
+	inputEvents   map[string]uint64
 }
 
 // aircraftStateData mirrors SimConnect's fixed struct layout for the
@@ -144,7 +173,7 @@ func (c *Client) Ready() bool {
 // reconnect (sim not running yet / paused / restarted) is handled
 // internally, confirmed against a live sim.
 func Connect(ctx context.Context, log *slog.Logger) *Client {
-	c := &Client{log: log}
+	c := &Client{log: log, genericEvents: map[string]uint32{}, nextGenericID: genericEventBase}
 
 	c.mgr = manager.New("mHOTAS Server",
 		manager.WithContext(ctx),
@@ -158,7 +187,18 @@ func Connect(ctx context.Context, log *slog.Logger) *Client {
 		case manager.StateConnected:
 			if client := c.mgr.Client(); client != nil {
 				setupEvents(client)
+				c.setupGenericEvents(client)
 				setupTelemetryRead(client)
+				c.inputEventsMu.Lock()
+				c.inputEvents = map[string]uint64{}
+				c.inputEventsMu.Unlock()
+				if err := c.mgr.EnumerateInputEvents(reqInputEvents); err != nil {
+					// Expected on MSFS2020 (Input Events are MSFS2024-only)
+					// and harmless either way — nothing depends on this
+					// succeeding yet (diagnostic + input_event driver
+					// groundwork only).
+					c.log.Info("input event enumeration unavailable", "err", err)
+				}
 				c.ready.Store(true)
 			}
 		case manager.StateAvailable:
@@ -170,6 +210,11 @@ func Connect(ctx context.Context, log *slog.Logger) *Client {
 
 	sub := c.mgr.Subscribe("mhotas-telemetry", 64)
 	go c.watchTelemetry(sub.Messages())
+
+	inputEventsSub := c.mgr.SubscribeWithFilter("mhotas-input-events", 50, func(msg engine.Message) bool {
+		return types.SIMCONNECT_RECV_ID(msg.DwID) == types.SIMCONNECT_RECV_ID_ENUMERATE_INPUT_EVENTS
+	})
+	go c.watchInputEvents(inputEventsSub.Messages())
 
 	// SimConnect's own Pause system event, auto-subscribed by the manager
 	// on connect — ground truth for Client.Paused(), not a locally-tracked
@@ -214,10 +259,119 @@ func setupEvents(client engine.Client) {
 		eventFlapsIncr, eventFlapsDecr,
 		eventAxisLeftBrake, eventAxisRightBrake,
 		eventSpoilersInc, eventSpoilersDec, eventSpoilersArmSet,
+		eventAutopilotOff, // was missing from this loop before the AP-disconnect button existed
 	} {
 		client.AddClientEventToNotificationGroup(notificationGroup, id, false)
 	}
 	client.SetNotificationGroupPriority(notificationGroup, 1)
+}
+
+// RegisterEvent assigns a stable client event ID to an arbitrary SimConnect
+// K:EVENT name, for control/simconnect's generic "kevent" driver — a config-
+// declared event this project has no dedicated Client method for. Safe to
+// call at driver-construction time, before the first connection completes:
+// this only reserves bookkeeping, actual mapping happens in
+// setupGenericEvents on every StateConnected (mirroring how the fixed events
+// above are (re-)mapped on every reconnect, not just the first one).
+func (c *Client) RegisterEvent(name string) uint32 {
+	c.genericEventsMu.Lock()
+	defer c.genericEventsMu.Unlock()
+	if id, ok := c.genericEvents[name]; ok {
+		return id
+	}
+	id := c.nextGenericID
+	c.nextGenericID++
+	c.genericEvents[name] = id
+	return id
+}
+
+// setupGenericEvents (re-)maps every name RegisterEvent has assigned an ID
+// to, so a generic "kevent" driver built before the first connection (or
+// still holding IDs from a previous SimConnect session) keeps working after
+// a reconnect.
+func (c *Client) setupGenericEvents(client engine.Client) {
+	c.genericEventsMu.Lock()
+	snapshot := make(map[string]uint32, len(c.genericEvents))
+	maps.Copy(snapshot, c.genericEvents)
+	c.genericEventsMu.Unlock()
+
+	for name, id := range snapshot {
+		client.MapClientEventToSimEvent(id, name)
+		client.AddClientEventToNotificationGroup(notificationGroup, id, false)
+	}
+}
+
+// TransmitNamed fires a previously RegisterEvent-ed K:EVENT by name.
+func (c *Client) TransmitNamed(name string, data uint32) error {
+	c.genericEventsMu.Lock()
+	id, ok := c.genericEvents[name]
+	c.genericEventsMu.Unlock()
+	if !ok {
+		return fmt.Errorf("simlink: event %q was never registered", name)
+	}
+	return c.transmit(id, data)
+}
+
+// ResolveInputEvent returns the current session's hash for a named Input
+// Event, or false if it hasn't been seen in this session's enumeration yet
+// (not connected, this aircraft doesn't expose an event with this name, or
+// the enumeration response just hasn't arrived yet).
+func (c *Client) ResolveInputEvent(name string) (uint64, bool) {
+	c.inputEventsMu.Lock()
+	defer c.inputEventsMu.Unlock()
+	hash, ok := c.inputEvents[name]
+	return hash, ok
+}
+
+// SetInputEvent writes a DOUBLE-typed Input Event value by name, resolving
+// it against the current session's enumeration (see ResolveInputEvent).
+// MSFS2024-only; fire-and-forget like the classic TransmitClientEvent path
+// (no confirmation the write actually landed).
+func (c *Client) SetInputEvent(name string, value float64) error {
+	hash, ok := c.ResolveInputEvent(name)
+	if !ok {
+		return fmt.Errorf("simlink: input event %q not found in this session's enumeration", name)
+	}
+	if !c.ready.Load() {
+		return fmt.Errorf("simlink: not connected to MSFS2024 yet")
+	}
+	return c.mgr.SetInputEventDouble(hash, value)
+}
+
+// watchInputEvents drains the enumeration subscription set up in Connect,
+// logging every descriptor (diagnostic — settles on real data what a given
+// aircraft actually exposes) and caching name->hash so ResolveInputEvent has
+// something to serve. SIMCONNECT_RECV_ENUMERATE_INPUT_EVENTS.RgData is a
+// single-element sentinel array in this binding's Go struct — the real
+// batch, DwArraySize entries long, follows it in the DLL's response buffer,
+// so entries beyond RgData[0] are walked by hand via unsafe pointer
+// arithmetic rather than by indexing the Go array (which would panic past
+// its declared length of 1).
+func (c *Client) watchInputEvents(messages <-chan engine.Message) {
+	descSize := unsafe.Sizeof(types.SIMCONNECT_INPUT_EVENT_DESCRIPTOR{})
+	for msg := range messages {
+		if msg.Err != nil {
+			c.log.Warn("input event enumeration message error", "err", msg.Err)
+			continue
+		}
+		recv := msg.AsEnumerateInputEvents()
+		if recv == nil || uint32(recv.DwRequestID) != reqInputEvents {
+			continue
+		}
+		base := unsafe.Pointer(&recv.RgData[0])
+		arraySize := int(recv.DwArraySize)
+		found := make(map[string]uint64, arraySize)
+		for i := range arraySize {
+			desc := (*types.SIMCONNECT_INPUT_EVENT_DESCRIPTOR)(unsafe.Add(base, uintptr(i)*descSize))
+			name := engine.BytesToString(desc.Name[:])
+			hash := uint64(desc.Hash)
+			found[name] = hash
+			c.log.Info("input event", "name", name, "hash", hash, "type", desc.Type)
+		}
+		c.inputEventsMu.Lock()
+		maps.Copy(c.inputEvents, found)
+		c.inputEventsMu.Unlock()
+	}
 }
 
 // setupTelemetryRead registers the aircraft-state data definition and

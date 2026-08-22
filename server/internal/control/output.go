@@ -31,9 +31,61 @@ func (a AxisID) String() string {
 }
 
 // ButtonID identifies a discrete control input, e.g. gear or parking brake.
-// The mapping from protocol.Button.ButtonID to a semantic ButtonID lives in
-// server config, not here.
+// Values are wire-level: app/lib/ui/control_screen.dart's ButtonIds class
+// hardcodes these same numbers independently (no shared codegen, see
+// docs/protocol.md) — do not renumber without updating both sides.
 type ButtonID uint8
+
+const (
+	ButtonGear ButtonID = iota + 1
+	ButtonParkingBrake
+	ButtonPause
+	ButtonFlapIncr
+	ButtonFlapDecr
+	ButtonToeBrake
+	ButtonSpoilerIncr
+	ButtonSpoilerDecr
+	ButtonSpoilerArm
+	ButtonAutopilotDisconnect
+)
+
+// axisNames/buttonNames back AxisByName/ButtonByName — the name a
+// server.config.json "controls" entry is keyed by. Kept here, not in any one
+// backend package, since the names are backend-agnostic: a vjoy mapping
+// entry addresses "throttle" the same way a simconnect one does.
+var axisNames = map[string]AxisID{
+	"pitch":    AxisPitch,
+	"roll":     AxisRoll,
+	"throttle": AxisThrottle,
+	"rudder":   AxisRudder,
+}
+
+var buttonNames = map[string]ButtonID{
+	"gear":                 ButtonGear,
+	"parking_brake":        ButtonParkingBrake,
+	"pause":                ButtonPause,
+	"flap_incr":            ButtonFlapIncr,
+	"flap_decr":            ButtonFlapDecr,
+	"toe_brake":            ButtonToeBrake,
+	"spoiler_incr":         ButtonSpoilerIncr,
+	"spoiler_decr":         ButtonSpoilerDecr,
+	"spoiler_arm":          ButtonSpoilerArm,
+	"autopilot_disconnect": ButtonAutopilotDisconnect,
+}
+
+// AxisByName resolves a config "controls" key to an AxisID, false if it
+// isn't a recognized axis name.
+func AxisByName(name string) (AxisID, bool) {
+	id, ok := axisNames[name]
+	return id, ok
+}
+
+// ButtonByName resolves a config "controls" key to a ButtonID, false if it
+// isn't a recognized button name.
+func ButtonByName(name string) (ButtonID, bool) {
+	id, ok := buttonNames[name]
+	return id, ok
+}
 
 // Output is implemented by each control-injection backend. Values arriving
 // here are already dead-zone/curve/invert-shaped by the calibration
