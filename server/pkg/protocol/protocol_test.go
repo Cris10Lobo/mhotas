@@ -112,6 +112,61 @@ func TestTelemetryRoundTrip(t *testing.T) {
 	}
 }
 
+func TestConfigGetHeaderOnly(t *testing.T) {
+	buf := EncodeConfigGet(4)
+	if len(buf) != ConfigGetPacketSize {
+		t.Fatalf("EncodeConfigGet: got %d bytes, want %d", len(buf), ConfigGetPacketSize)
+	}
+	hdr, err := DecodeHeader(buf)
+	if err != nil {
+		t.Fatalf("DecodeHeader: %v", err)
+	}
+	if hdr.Type != TypeConfigGet || hdr.Seq != 4 {
+		t.Fatalf("header mismatch: %+v", hdr)
+	}
+}
+
+func TestConfigRoundTrip(t *testing.T) {
+	ac := func(dz, expo, smoothing float32, invert bool) AxisCalibration {
+		return AxisCalibration{DeadZone: dz, Expo: expo, Invert: invert, Smoothing: smoothing}
+	}
+	want := Config{
+		Pitch:    ac(0.05, 0.6, 0.5, false),
+		Roll:     ac(0.05, 0.6, 0.5, true),
+		Throttle: ac(0.05, 0, 0, false),
+		Rudder:   ac(0, 0, 0, true),
+	}
+	buf := EncodeConfig(1, want)
+	if len(buf) != ConfigPacketSize {
+		t.Fatalf("EncodeConfig: got %d bytes, want %d", len(buf), ConfigPacketSize)
+	}
+	got, err := DecodeConfig(buf)
+	if err != nil {
+		t.Fatalf("DecodeConfig: %v", err)
+	}
+	if got != want {
+		t.Fatalf("round trip mismatch: got %+v, want %+v", got, want)
+	}
+}
+
+func TestConfigSetRoundTrip(t *testing.T) {
+	want := ConfigSet{
+		Axis:        ConfigAxisThrottle,
+		Calibration: AxisCalibration{DeadZone: 0.1, Expo: 0.3, Invert: true, Smoothing: 0.4},
+	}
+	buf := EncodeConfigSet(5, want)
+	if len(buf) != ConfigSetPacketSize {
+		t.Fatalf("EncodeConfigSet: got %d bytes, want %d", len(buf), ConfigSetPacketSize)
+	}
+	got, err := DecodeConfigSet(buf)
+	if err != nil {
+		t.Fatalf("DecodeConfigSet: %v", err)
+	}
+	if got != want {
+		t.Fatalf("round trip mismatch: got %+v, want %+v", got, want)
+	}
+}
+
 func TestDecodeTooShort(t *testing.T) {
 	cases := []struct {
 		name string
@@ -123,6 +178,8 @@ func TestDecodeTooShort(t *testing.T) {
 		{"hello", func(b []byte) error { _, err := DecodeHello(b); return err }},
 		{"helloAck", func(b []byte) error { _, err := DecodeHelloAck(b); return err }},
 		{"telemetry", func(b []byte) error { _, err := DecodeTelemetry(b); return err }},
+		{"config", func(b []byte) error { _, err := DecodeConfig(b); return err }},
+		{"configSet", func(b []byte) error { _, err := DecodeConfigSet(b); return err }},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

@@ -71,7 +71,7 @@ func run() error {
 	}
 	defer backend.Close()
 
-	srv, err := transport.New(cfg, backend, log)
+	srv, err := transport.New(cfg, backend, log, *configPath)
 	if err != nil {
 		return fmt.Errorf("starting transport: %w", err)
 	}
