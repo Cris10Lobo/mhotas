@@ -65,7 +65,7 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	backend, err := newBackend(ctx, *backendName, log)
+	backend, err := newBackend(ctx, *backendName, log, cfg.Controls)
 	if err != nil {
 		return err
 	}

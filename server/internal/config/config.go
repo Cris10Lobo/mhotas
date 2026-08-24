@@ -33,6 +33,21 @@ type AxisConfig struct {
 	Smoothing float64 `json:"smoothing"`
 }
 
+// ControlMapping declares how one named control (a key in Config.Controls,
+// e.g. "throttle", "gear" — resolved against control.AxisByName/ButtonByName)
+// actually reaches the simulator. Driver is backend-specific data, not
+// validated here: control/simconnect's driver factory is the authority on
+// which Driver kinds ("kevent", "input_event", ...) and fields it
+// understands — this struct only carries the JSON through. A backend that
+// doesn't recognize a Driver kind, or finds an entry naming a control it
+// doesn't drive, fails at backend construction, not here.
+type ControlMapping struct {
+	Driver string `json:"driver"`
+	Event  string `json:"event,omitempty"` // kevent: the K:EVENT name to transmit
+	Name   string `json:"name,omitempty"`  // input_event: the Input Event name to resolve
+	Invert bool   `json:"invert,omitempty"`
+}
+
 // Config is the full server configuration.
 type Config struct {
 	ListenPort        int        `json:"listen_port"`
@@ -41,6 +56,13 @@ type Config struct {
 	Roll              AxisConfig `json:"roll"`
 	Throttle          AxisConfig `json:"throttle"`
 	Rudder            AxisConfig `json:"rudder"`
+
+	// Controls overrides how individual controls reach the simulator, keyed
+	// by name ("throttle", "gear", "autopilot_disconnect", ...). A name with
+	// no entry here uses the active backend's own default mapping — an
+	// empty/absent Controls section reproduces that backend's built-in
+	// behavior exactly.
+	Controls map[string]ControlMapping `json:"controls,omitempty"`
 }
 
 // Default returns the MVP default configuration: port 9750, 500ms failsafe

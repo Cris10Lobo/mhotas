@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"mhotas/internal/config"
 	"mhotas/internal/control"
 	"mhotas/internal/control/logbackend"
 	"mhotas/internal/control/simconnect"
@@ -15,12 +16,12 @@ import (
 	"mhotas/internal/telemetry"
 )
 
-func newBackend(ctx context.Context, name string, log *slog.Logger) (control.Output, error) {
+func newBackend(ctx context.Context, name string, log *slog.Logger, controls map[string]config.ControlMapping) (control.Output, error) {
 	switch name {
 	case "log":
 		return logbackend.New(log), nil
 	case "simconnect":
-		return simconnect.New(ctx, log)
+		return simconnect.New(ctx, log, controls)
 	case "vjoy":
 		return vjoy.New()
 	default:
