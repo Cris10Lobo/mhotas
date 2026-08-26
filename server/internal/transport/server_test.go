@@ -83,12 +83,17 @@ func (b *fakeBackend) buttonCount() int {
 
 func newTestServer(t *testing.T, cfg config.Config) (*Server, *fakeBackend, *net.UDPConn) {
 	t.Helper()
+	return newTestServerWithConfigPath(t, cfg, "")
+}
+
+func newTestServerWithConfigPath(t *testing.T, cfg config.Config, configPath string) (*Server, *fakeBackend, *net.UDPConn) {
+	t.Helper()
 	if cfg.ListenPort == 0 {
 		// let the OS pick a free port
 	}
 	backend := &fakeBackend{}
 	log := slog.New(slog.DiscardHandler)
-	srv, err := New(cfg, backend, log)
+	srv, err := New(cfg, backend, log, configPath)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -231,6 +236,119 @@ func TestAxisSmoothingDampensJump(t *testing.T) {
 	hist = waitForCount(2)
 	if hist[1] != 0.75 {
 		t.Fatalf("second smoothed pitch = %v, want 0.75 (still converging toward 1)", hist[1])
+	}
+}
+
+func TestConfigSetUpdatesCalibrationPersistsAndEchoes(t *testing.T) {
+	cfg := config.Default()
+	cfg.ListenPort = 0
+	configPath := t.TempDir() + "/config.json"
+	_, backend, client := newTestServerWithConfigPath(t, cfg, configPath)
+	sendHello(t, client)
+
+	readConfig := func() protocol.Config {
+		t.Helper()
+		buf := make([]byte, 1500)
+		if err := client.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+			t.Fatalf("SetReadDeadline: %v", err)
+		}
+		n, err := client.Read(buf)
+		if err != nil {
+			t.Fatalf("read CONFIG: %v", err)
+		}
+		c, err := protocol.DecodeConfig(buf[:n])
+		if err != nil {
+			t.Fatalf("DecodeConfig: %v", err)
+		}
+		return c
+	}
+	// Drain the CONFIG sent unprompted right after HELLO_ACK.
+	readConfig()
+
+	pkt := protocol.EncodeConfigSet(2, protocol.ConfigSet{
+		Axis: protocol.ConfigAxisThrottle,
+		Calibration: protocol.AxisCalibration{
+			DeadZone: 0.2, Expo: 0.5, Invert: true, Smoothing: 0.1,
+		},
+	})
+	if _, err := client.Write(pkt); err != nil {
+		t.Fatalf("write CONFIG_SET: %v", err)
+	}
+
+	got := readConfig()
+	want := protocol.AxisCalibration{DeadZone: 0.2, Expo: 0.5, Invert: true, Smoothing: 0.1}
+	if got.Throttle != want {
+		t.Fatalf("echoed throttle calibration = %+v, want %+v", got.Throttle, want)
+	}
+
+	// A subsequent AXIS packet should be shaped by the new calibration
+	// (inverted, so a positive raw value comes out negative).
+	pkt = protocol.EncodeAxis(3, protocol.Axis{Throttle: 0.5})
+	if _, err := client.Write(pkt); err != nil {
+		t.Fatalf("write AXIS: %v", err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if v, ok := backend.lastAxis(control.AxisThrottle); ok {
+			if v >= 0 {
+				t.Fatalf("throttle = %v, want negative (new invert applied)", v)
+			}
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// Persisted to disk, so it survives a restart.
+	loaded, err := config.Load(configPath)
+	if err != nil {
+		t.Fatalf("config.Load after CONFIG_SET: %v", err)
+	}
+	// Wire values are float32 (see AxisCalibration); compare against the
+	// same float64(float32(...)) widening the server applies, not the
+	// float64 literal, which differs in the low bits.
+	if loaded.Throttle.Curve.DeadZone != float64(float32(0.2)) ||
+		loaded.Throttle.Curve.Expo != float64(float32(0.5)) ||
+		!loaded.Throttle.Curve.Invert ||
+		loaded.Throttle.Smoothing != float64(float32(0.1)) {
+		t.Fatalf("persisted throttle config = %+v, want dead_zone ~0.2, expo 0.5, invert true, smoothing ~0.1", loaded.Throttle)
+	}
+	// Failsafe policy, which CONFIG_SET never touches, must survive
+	// unchanged.
+	if loaded.Throttle.Failsafe != config.FailsafeHold {
+		t.Fatalf("persisted throttle failsafe = %v, want unchanged FailsafeHold", loaded.Throttle.Failsafe)
+	}
+}
+
+func TestConfigGetRepliesWithCurrentConfig(t *testing.T) {
+	cfg := config.Default()
+	cfg.ListenPort = 0
+	cfg.Rudder.Curve.DeadZone = 0.05
+	_, _, client := newTestServer(t, cfg)
+	sendHello(t, client)
+
+	buf := make([]byte, 1500)
+	if err := client.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatalf("SetReadDeadline: %v", err)
+	}
+	// Drain the CONFIG sent unprompted right after HELLO_ACK.
+	if _, err := client.Read(buf); err != nil {
+		t.Fatalf("read initial CONFIG: %v", err)
+	}
+
+	pkt := protocol.EncodeConfigGet(2)
+	if _, err := client.Write(pkt); err != nil {
+		t.Fatalf("write CONFIG_GET: %v", err)
+	}
+	n, err := client.Read(buf)
+	if err != nil {
+		t.Fatalf("read CONFIG reply: %v", err)
+	}
+	got, err := protocol.DecodeConfig(buf[:n])
+	if err != nil {
+		t.Fatalf("DecodeConfig: %v", err)
+	}
+	if got.Rudder.DeadZone != float32(0.05) {
+		t.Fatalf("rudder deadZone = %v, want 0.05", got.Rudder.DeadZone)
 	}
 }
 

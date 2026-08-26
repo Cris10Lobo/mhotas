@@ -19,6 +19,9 @@ class PacketType {
   static const int helloAck = 0x04;
   static const int heartbeat = 0x05;
   static const int telemetry = 0x06;
+  static const int config = 0x07;
+  static const int configSet = 0x08;
+  static const int configGet = 0x09;
 }
 
 const int headerSize = 4;
@@ -283,3 +286,110 @@ Telemetry decodeTelemetry(Uint8List b) {
     verticalSpeedFpm: bd.getFloat32(26, Endian.little),
   );
 }
+
+// ---- CONFIG (0x07) / CONFIG_SET (0x08) ----
+
+/// Selects which axis a CONFIG_SET applies to. Failsafe policy isn't
+/// included — it stays a server-config-file-only, operator judgment call.
+class ConfigAxis {
+  static const int pitch = 0;
+  static const int roll = 1;
+  static const int throttle = 2;
+  static const int rudder = 3;
+}
+
+const int _axisCalibrationSize = 13;
+
+/// Dead-zone/expo/invert/smoothing for one axis — everything about it the
+/// phone can see and edit. Mirrors server/internal/calibration.Curve plus
+/// the smoothing factor.
+class AxisCalibration {
+  final double deadZone;
+  final double expo;
+  final bool invert;
+  final double smoothing;
+
+  const AxisCalibration({
+    required this.deadZone,
+    required this.expo,
+    required this.invert,
+    required this.smoothing,
+  });
+}
+
+void _encodeAxisCalibration(ByteData bd, int offset, AxisCalibration ac) {
+  bd.setFloat32(offset, ac.deadZone, Endian.little);
+  bd.setFloat32(offset + 4, ac.expo, Endian.little);
+  bd.setUint8(offset + 8, ac.invert ? 1 : 0);
+  bd.setFloat32(offset + 9, ac.smoothing, Endian.little);
+}
+
+AxisCalibration _decodeAxisCalibration(ByteData bd, int offset) {
+  return AxisCalibration(
+    deadZone: bd.getFloat32(offset, Endian.little),
+    expo: bd.getFloat32(offset + 4, Endian.little),
+    invert: bd.getUint8(offset + 8) != 0,
+    smoothing: bd.getFloat32(offset + 9, Endian.little),
+  );
+}
+
+const int configPacketSize = headerSize + 4 * _axisCalibrationSize;
+
+/// The server's current calibration for every axis — pushed server → phone
+/// right after HELLO_ACK and again after every CONFIG_SET is applied, the
+/// same "full snapshot, not a diff" approach TELEMETRY already uses.
+class Config {
+  final AxisCalibration pitch;
+  final AxisCalibration roll;
+  final AxisCalibration throttle;
+  final AxisCalibration rudder;
+
+  const Config({
+    required this.pitch,
+    required this.roll,
+    required this.throttle,
+    required this.rudder,
+  });
+}
+
+Config decodeConfig(Uint8List b) {
+  if (b.length < configPacketSize) {
+    throw FormatException('CONFIG packet too short: ${b.length} bytes');
+  }
+  final bd = ByteData.sublistView(b);
+  return Config(
+    pitch: _decodeAxisCalibration(bd, 4),
+    roll: _decodeAxisCalibration(bd, 4 + _axisCalibrationSize),
+    throttle: _decodeAxisCalibration(bd, 4 + 2 * _axisCalibrationSize),
+    rudder: _decodeAxisCalibration(bd, 4 + 3 * _axisCalibrationSize),
+  );
+}
+
+const int configSetPacketSize = headerSize + 1 + _axisCalibrationSize;
+
+/// Sent phone → server to change one axis's calibration. The server replies
+/// with a fresh CONFIG once applied — there's no separate ack packet type.
+class ConfigSet {
+  final int axis; // ConfigAxis.*
+  final AxisCalibration calibration;
+
+  const ConfigSet({required this.axis, required this.calibration});
+}
+
+Uint8List encodeConfigSet(int seq, ConfigSet cs) {
+  final buf = _newPacket(PacketType.configSet, seq, configSetPacketSize);
+  final bd = ByteData.sublistView(buf);
+  buf[4] = cs.axis & 0xff;
+  _encodeAxisCalibration(bd, 5, cs.calibration);
+  return buf;
+}
+
+const int configGetPacketSize = headerSize;
+
+/// Sent by the app when a settings screen opens, so it gets the server's
+/// current calibration even if it missed the one CONFIG pushed unprompted
+/// right after HELLO_ACK (unlike TELEMETRY, CONFIG isn't sent on a
+/// recurring timer, so a late subscriber has nothing to fall back on
+/// without this).
+Uint8List encodeConfigGet(int seq) =>
+    _newPacket(PacketType.configGet, seq, configGetPacketSize);

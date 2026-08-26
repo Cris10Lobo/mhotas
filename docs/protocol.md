@@ -30,6 +30,9 @@ Every packet starts with a 4-byte header:
 | 0x04 | `HELLO_ACK`  | server → phone   | once, in reply to `HELLO`      |
 | 0x05 | `HEARTBEAT`  | both directions  | ~1Hz                            |
 | 0x06 | `TELEMETRY`  | server → phone   | on-change or ~2-5Hz             |
+| 0x07 | `CONFIG`     | server → phone   | after HELLO_ACK, after CONFIG_SET, in reply to CONFIG_GET |
+| 0x08 | `CONFIG_SET` | phone → server   | on a calibration edit           |
+| 0x09 | `CONFIG_GET` | phone → server   | on settings screen open         |
 
 ### `AXIS` (0x01) — 20 bytes total
 
@@ -103,6 +106,49 @@ struct rather than a generic key/value simvar schema; v2 (offsets 14-29) extends
 read-only status-tile values (airspeed/altitude/heading/vertical speed) rather than switching schemes. A
 generic subscription scheme (arbitrary simvars from the `mrlm-net/simconnect` library's tracked set) is
 a later protocol extension, not v2.
+
+### `CONFIG` (0x07) — 56 bytes total
+
+Full snapshot of the server's current dead-zone/expo/invert/smoothing for every axis, same "whole
+struct, not a diff" approach as `TELEMETRY`. Sent unprompted right after `HELLO_ACK`, again after every
+applied `CONFIG_SET`, and in reply to a `CONFIG_GET`. Failsafe policy isn't part of this — it stays a
+server-config-file-only setting, not phone-editable.
+
+Four fixed-order 13-byte axis-calibration blocks, pitch/roll/throttle/rudder:
+
+| Offset (within block) | Size | Field       | Range          |
+|------------------------|------|-------------|----------------|
+| 0                       | 4    | `deadZone`  | float32, 0..1  |
+| 4                       | 4    | `expo`      | float32, 0..1  |
+| 8                       | 1    | `invert`    | uint8: 0/1     |
+| 9                       | 4    | `smoothing` | float32, 0..1  |
+
+| Offset | Size | Field      |
+|--------|------|------------|
+| 4      | 13   | `pitch`    |
+| 17     | 13   | `roll`     |
+| 30     | 13   | `throttle` |
+| 43     | 13   | `rudder`   |
+
+### `CONFIG_SET` (0x08) — 18 bytes total
+
+| Offset | Size | Field         | Notes                                             |
+|--------|------|---------------|----------------------------------------------------|
+| 4      | 1    | `axis`        | 0=pitch, 1=roll, 2=throttle, 3=rudder               |
+| 5      | 13   | `calibration` | same axis-calibration block layout as `CONFIG`      |
+
+Changes one axis's dead-zone/expo/invert/smoothing. The server clamps `deadZone`/`expo`/`smoothing` to
+`[0,1]` (a malformed or stale-client value shouldn't be able to put the calibration curve into
+undefined/NaN territory), preserves that axis's existing failsafe policy untouched, persists the full
+config back to its config file (if one was given via `-config`; a no-config-file run just applies the
+change for the session), and replies with a fresh `CONFIG` — there's no separate ack packet type.
+
+### `CONFIG_GET` (0x09) — 4 bytes total (header only)
+
+Requests a `CONFIG` reply. Unlike `TELEMETRY`'s recurring stream, `CONFIG` is only ever sent once
+unprompted (right after `HELLO_ACK`) or on an edit — a settings screen that wasn't mounted yet when that
+one-shot arrived has nothing to fall back on without explicitly asking again, so the app sends this
+whenever the settings screen opens.
 
 ## Bidirectional sync
 

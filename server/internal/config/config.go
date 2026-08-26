@@ -1,6 +1,8 @@
 // Package config loads server configuration: listen port, per-axis
-// calibration curves, and failsafe policy. MVP config is a hand-edited JSON
-// file; a phone-side remote settings UI is Phase 3, not MVP.
+// calibration curves, and failsafe policy. Backed by a hand-edited JSON
+// file; per-axis dead-zone/expo/invert/smoothing can also be edited live
+// from the phone (CONFIG_SET, see server/internal/transport), which calls
+// Save to persist the change back to the same file.
 package config
 
 import (
@@ -103,6 +105,25 @@ func Load(path string) (Config, error) {
 		return Config{}, fmt.Errorf("config: %s: %w", path, err)
 	}
 	return cfg, nil
+}
+
+// Save writes cfg as JSON to path. Empty path is a no-op, mirroring Load's
+// "no config file" case — used so a live phone-side calibration edit
+// (server/internal/transport's CONFIG_SET handling) persists across a
+// restart when the server was launched with -config, and is silently
+// skipped rather than erroring when it wasn't.
+func Save(path string, cfg Config) error {
+	if path == "" {
+		return nil
+	}
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return fmt.Errorf("config: marshaling: %w", err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		return fmt.Errorf("config: writing %s: %w", path, err)
+	}
+	return nil
 }
 
 // validate rejects a failsafe value that isn't exactly "neutral" or

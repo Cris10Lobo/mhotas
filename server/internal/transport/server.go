@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"mhotas/internal/calibration"
 	"mhotas/internal/config"
 	"mhotas/internal/control"
 	"mhotas/pkg/protocol"
@@ -25,10 +26,16 @@ import (
 // Server reads phone packets, drives a control.Output backend, and pushes
 // telemetry/heartbeats back to whichever phone last sent a valid HELLO.
 type Server struct {
-	conn    *net.UDPConn
-	backend control.Output
-	cfg     config.Config
-	log     *slog.Logger
+	conn       *net.UDPConn
+	backend    control.Output
+	log        *slog.Logger
+	configPath string // for config.Save on a live CONFIG_SET; "" = don't persist
+
+	// cfg is mutated at runtime by CONFIG_SET (from the single-goroutine
+	// receive loop) and read concurrently by failsafeLoop (its own
+	// goroutine) — every access goes through axisConfig/currentConfig/
+	// setAxisConfig below, all mu-guarded.
+	cfg config.Config
 
 	mu                sync.Mutex
 	clientAddr        *net.UDPAddr
@@ -69,7 +76,10 @@ func (s *Server) Status() Status {
 	}
 }
 
-func New(cfg config.Config, backend control.Output, log *slog.Logger) (*Server, error) {
+// New starts listening on cfg.ListenPort. configPath is the file cfg was
+// loaded from (empty if none) — remembered so a live CONFIG_SET can persist
+// back to it; New itself never reads or writes the file again.
+func New(cfg config.Config, backend control.Output, log *slog.Logger, configPath string) (*Server, error) {
 	// "udp4", not "udp": phones connect via manual IPv4 entry, and an
 	// unspecified bind on Windows can land on the IPv6 wildcard, which
 	// WSL's IPv4 loopback forwarding can't reach ("connection refused").
@@ -82,9 +92,66 @@ func New(cfg config.Config, backend control.Output, log *slog.Logger) (*Server, 
 		backend:         backend,
 		cfg:             cfg,
 		log:             log,
+		configPath:      configPath,
 		lastButtonEvent: make(map[uint8]uint16),
 		lastShaped:      make(map[control.AxisID]float64),
 	}, nil
+}
+
+// axisConfig returns the current calibration for one axis. Mu-guarded since
+// CONFIG_SET can mutate cfg concurrently with failsafeLoop reading it.
+func (s *Server) axisConfig(id control.AxisID) config.AxisConfig {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	switch id {
+	case control.AxisPitch:
+		return s.cfg.Pitch
+	case control.AxisRoll:
+		return s.cfg.Roll
+	case control.AxisThrottle:
+		return s.cfg.Throttle
+	case control.AxisRudder:
+		return s.cfg.Rudder
+	default:
+		return config.AxisConfig{}
+	}
+}
+
+// currentConfig returns a snapshot of the full config, e.g. to persist or
+// send back to the phone.
+func (s *Server) currentConfig() config.Config {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.cfg
+}
+
+// setAxisConfig applies new dead-zone/expo/invert/smoothing to one axis,
+// preserving that axis's existing Failsafe policy — CONFIG_SET never
+// touches Failsafe, which stays a config-file-only, operator judgment call.
+// Reports the axis's control.AxisID and whether the selector was valid.
+func (s *Server) setAxisConfig(axis protocol.ConfigAxis, ac config.AxisConfig) (control.AxisID, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	switch axis {
+	case protocol.ConfigAxisPitch:
+		ac.Failsafe = s.cfg.Pitch.Failsafe
+		s.cfg.Pitch = ac
+		return control.AxisPitch, true
+	case protocol.ConfigAxisRoll:
+		ac.Failsafe = s.cfg.Roll.Failsafe
+		s.cfg.Roll = ac
+		return control.AxisRoll, true
+	case protocol.ConfigAxisThrottle:
+		ac.Failsafe = s.cfg.Throttle.Failsafe
+		s.cfg.Throttle = ac
+		return control.AxisThrottle, true
+	case protocol.ConfigAxisRudder:
+		ac.Failsafe = s.cfg.Rudder.Failsafe
+		s.cfg.Rudder = ac
+		return control.AxisRudder, true
+	default:
+		return 0, false
+	}
 }
 
 func (s *Server) Addr() *net.UDPAddr {
@@ -155,6 +222,10 @@ func (s *Server) handlePacket(addr *net.UDPAddr, data []byte) {
 		s.handleAxis(addr, data)
 	case protocol.TypeButton:
 		s.handleButton(addr, data)
+	case protocol.TypeConfigSet:
+		s.handleConfigSet(addr, data)
+	case protocol.TypeConfigGet:
+		s.handleConfigGet(addr)
 	case protocol.TypeHeartbeat:
 		s.log.Debug("heartbeat", "from", addr)
 	default:
@@ -193,6 +264,15 @@ func (s *Server) handleHello(addr *net.UDPAddr, hdr protocol.Header, data []byte
 	if _, err := s.conn.WriteToUDP(ack, addr); err != nil {
 		s.log.Warn("failed to send HELLO_ACK", "err", err)
 	}
+
+	// Send current calibration right away so a freshly-opened settings
+	// screen shows real values instead of defaults — no separate
+	// CONFIG_GET request type needed for that.
+	if status == protocol.HelloOK {
+		if err := s.SendConfig(); err != nil {
+			s.log.Warn("failed to send CONFIG", "err", err)
+		}
+	}
 }
 
 func (s *Server) handleAxis(addr *net.UDPAddr, data []byte) {
@@ -211,10 +291,10 @@ func (s *Server) handleAxis(addr *net.UDPAddr, data []byte) {
 	s.failsafeApplied = false
 	s.mu.Unlock()
 
-	s.applyAxis(control.AxisPitch, float64(axis.Pitch), s.cfg.Pitch)
-	s.applyAxis(control.AxisRoll, float64(axis.Roll), s.cfg.Roll)
-	s.applyAxis(control.AxisThrottle, float64(axis.Throttle), s.cfg.Throttle)
-	s.applyAxis(control.AxisRudder, float64(axis.Rudder), s.cfg.Rudder)
+	s.applyAxis(control.AxisPitch, float64(axis.Pitch), s.axisConfig(control.AxisPitch))
+	s.applyAxis(control.AxisRoll, float64(axis.Roll), s.axisConfig(control.AxisRoll))
+	s.applyAxis(control.AxisThrottle, float64(axis.Throttle), s.axisConfig(control.AxisThrottle))
+	s.applyAxis(control.AxisRudder, float64(axis.Rudder), s.axisConfig(control.AxisRudder))
 }
 
 func (s *Server) applyAxis(id control.AxisID, raw float64, ac config.AxisConfig) {
@@ -310,6 +390,74 @@ func (s *Server) handleButton(addr *net.UDPAddr, data []byte) {
 	s.log.Info("button", "id", btn.ButtonID, "pressed", btn.Pressed)
 }
 
+// handleConfigSet applies a phone-edited dead-zone/expo/invert/smoothing to
+// one axis, persists it (if a config file path is known), and echoes back
+// the full CONFIG snapshot so the phone's settings screen shows exactly
+// what's now in effect.
+func (s *Server) handleConfigSet(addr *net.UDPAddr, data []byte) {
+	if !s.isCurrentClient(addr) {
+		s.log.Warn("dropping CONFIG_SET from non-established address", "from", addr)
+		return
+	}
+	cs, err := protocol.DecodeConfigSet(data)
+	if err != nil {
+		s.log.Warn("bad CONFIG_SET", "err", err, "from", addr)
+		return
+	}
+	// DeadZone/Expo/Smoothing are only ever meaningful in [0,1] — Curve.Apply
+	// only guards DeadZone>=1, so an out-of-range value from the wire (a
+	// stale app build, a malformed packet) needs clamping here, the actual
+	// trust boundary, rather than trusted to already be sane.
+	ac := config.AxisConfig{
+		Curve: calibration.Curve{
+			DeadZone: clamp01(float64(cs.Calibration.DeadZone)),
+			Expo:     clamp01(float64(cs.Calibration.Expo)),
+			Invert:   cs.Calibration.Invert,
+		},
+		Smoothing: clamp01(float64(cs.Calibration.Smoothing)),
+	}
+	id, ok := s.setAxisConfig(cs.Axis, ac)
+	if !ok {
+		s.log.Warn("bad CONFIG_SET axis", "axis", cs.Axis, "from", addr)
+		return
+	}
+	if err := config.Save(s.configPath, s.currentConfig()); err != nil {
+		s.log.Warn("failed to persist config", "err", err)
+	}
+	s.log.Info("config updated", "axis", id, "deadZone", ac.Curve.DeadZone,
+		"expo", ac.Curve.Expo, "invert", ac.Curve.Invert, "smoothing", ac.Smoothing)
+	if err := s.SendConfig(); err != nil {
+		s.log.Warn("failed to send CONFIG", "err", err)
+	}
+}
+
+// handleConfigGet replies with the current CONFIG snapshot — a settings
+// screen that mounts after the one unprompted post-HELLO_ACK CONFIG already
+// fired (and was missed, since nothing has a "last value" buffer for it the
+// way TELEMETRY's recurring stream implicitly does) sends this to catch up.
+func (s *Server) handleConfigGet(addr *net.UDPAddr) {
+	if !s.isCurrentClient(addr) {
+		s.log.Warn("dropping CONFIG_GET from non-established address", "from", addr)
+		return
+	}
+	if err := s.SendConfig(); err != nil {
+		s.log.Warn("failed to send CONFIG", "err", err)
+	}
+}
+
+func clamp01(v float64) float64 {
+	if math.IsNaN(v) {
+		return 0
+	}
+	if v < 0 {
+		return 0
+	}
+	if v > 1 {
+		return 1
+	}
+	return v
+}
+
 // SendTelemetry pushes a TELEMETRY packet to the currently connected phone,
 // if any. Safe to call with no phone connected (no-op).
 func (s *Server) SendTelemetry(t protocol.Telemetry) error {
@@ -318,6 +466,32 @@ func (s *Server) SendTelemetry(t protocol.Telemetry) error {
 		return nil
 	}
 	pkt := protocol.EncodeTelemetry(s.nextSeq(), t)
+	_, err := s.conn.WriteToUDP(pkt, addr)
+	return err
+}
+
+// SendConfig pushes the current calibration to the connected phone, if any
+// — sent right after HELLO_ACK and again after every applied CONFIG_SET.
+func (s *Server) SendConfig() error {
+	addr := s.currentClient()
+	if addr == nil {
+		return nil
+	}
+	toWire := func(ac config.AxisConfig) protocol.AxisCalibration {
+		return protocol.AxisCalibration{
+			DeadZone:  float32(ac.Curve.DeadZone),
+			Expo:      float32(ac.Curve.Expo),
+			Invert:    ac.Curve.Invert,
+			Smoothing: float32(ac.Smoothing),
+		}
+	}
+	cfg := s.currentConfig()
+	pkt := protocol.EncodeConfig(s.nextSeq(), protocol.Config{
+		Pitch:    toWire(cfg.Pitch),
+		Roll:     toWire(cfg.Roll),
+		Throttle: toWire(cfg.Throttle),
+		Rudder:   toWire(cfg.Rudder),
+	})
 	_, err := s.conn.WriteToUDP(pkt, addr)
 	return err
 }
@@ -395,10 +569,10 @@ func (s *Server) checkFailsafe(timeout time.Duration) {
 	}
 
 	s.log.Warn("AXIS timeout, applying failsafe", "timeout", timeout)
-	s.applyFailsafe(control.AxisPitch, s.cfg.Pitch)
-	s.applyFailsafe(control.AxisRoll, s.cfg.Roll)
-	s.applyFailsafe(control.AxisThrottle, s.cfg.Throttle)
-	s.applyFailsafe(control.AxisRudder, s.cfg.Rudder)
+	s.applyFailsafe(control.AxisPitch, s.axisConfig(control.AxisPitch))
+	s.applyFailsafe(control.AxisRoll, s.axisConfig(control.AxisRoll))
+	s.applyFailsafe(control.AxisThrottle, s.axisConfig(control.AxisThrottle))
+	s.applyFailsafe(control.AxisRudder, s.axisConfig(control.AxisRudder))
 }
 
 func (s *Server) applyFailsafe(id control.AxisID, ac config.AxisConfig) {

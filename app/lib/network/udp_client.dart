@@ -26,6 +26,7 @@ class UdpClient {
 
   final _statusController = StreamController<ConnectionStatus>.broadcast();
   final _telemetryController = StreamController<proto.Telemetry>.broadcast();
+  final _configController = StreamController<proto.Config>.broadcast();
   ConnectionStatus _lastStatus = ConnectionStatus.disconnected;
 
   // The server sends HEARTBEAT/TELEMETRY at ~1Hz (docs/protocol.md), so
@@ -39,6 +40,7 @@ class UdpClient {
 
   Stream<ConnectionStatus> get status => _statusController.stream;
   Stream<proto.Telemetry> get telemetry => _telemetryController.stream;
+  Stream<proto.Config> get config => _configController.stream;
 
   void _setStatus(ConnectionStatus s) {
     _lastStatus = s;
@@ -123,6 +125,8 @@ class UdpClient {
         break;
       case proto.PacketType.telemetry:
         _telemetryController.add(proto.decodeTelemetry(data));
+      case proto.PacketType.config:
+        _configController.add(proto.decodeConfig(data));
     }
   }
 
@@ -138,6 +142,19 @@ class UdpClient {
     for (var i = 0; i < 3; i++) {
       _send(proto.encodeButton(_nextSeq(), button));
     }
+  }
+
+  /// Sends a calibration change for one axis. The server persists it and
+  /// echoes back a fresh CONFIG once applied — no local ack tracking needed
+  /// here, [config] just reflects whatever arrives.
+  void sendConfigSet(proto.ConfigSet cs) {
+    _send(proto.encodeConfigSet(_nextSeq(), cs));
+  }
+
+  /// Requests a fresh CONFIG — call when a settings screen opens, in case
+  /// it missed the one sent unprompted right after HELLO_ACK.
+  void requestConfig() {
+    _send(proto.encodeConfigGet(_nextSeq()));
   }
 
   int _nextSeq() {
@@ -164,5 +181,6 @@ class UdpClient {
     disconnect();
     _statusController.close();
     _telemetryController.close();
+    _configController.close();
   }
 }

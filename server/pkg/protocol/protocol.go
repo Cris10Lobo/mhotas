@@ -25,6 +25,9 @@ const (
 	TypeHelloAck  PacketType = 0x04
 	TypeHeartbeat PacketType = 0x05
 	TypeTelemetry PacketType = 0x06
+	TypeConfig    PacketType = 0x07
+	TypeConfigSet PacketType = 0x08
+	TypeConfigGet PacketType = 0x09
 )
 
 func (t PacketType) String() string {
@@ -41,6 +44,12 @@ func (t PacketType) String() string {
 		return "HEARTBEAT"
 	case TypeTelemetry:
 		return "TELEMETRY"
+	case TypeConfig:
+		return "CONFIG"
+	case TypeConfigSet:
+		return "CONFIG_SET"
+	case TypeConfigGet:
+		return "CONFIG_GET"
 	default:
 		return fmt.Sprintf("UNKNOWN(0x%02x)", uint8(t))
 	}
@@ -322,5 +331,120 @@ func DecodeTelemetry(b []byte) (Telemetry, error) {
 		AltitudeFeet:       math.Float32frombits(binary.LittleEndian.Uint32(b[18:22])),
 		HeadingDegrees:     math.Float32frombits(binary.LittleEndian.Uint32(b[22:26])),
 		VerticalSpeedFpm:   math.Float32frombits(binary.LittleEndian.Uint32(b[26:30])),
+	}, nil
+}
+
+// ---- CONFIG (0x07) / CONFIG_SET (0x08) ----
+
+// ConfigAxis selects which axis a CONFIG_SET applies to. Failsafe policy
+// isn't included here — it's a judgment call left in the server's config
+// file, not something the phone edits.
+type ConfigAxis uint8
+
+const (
+	ConfigAxisPitch    ConfigAxis = 0
+	ConfigAxisRoll     ConfigAxis = 1
+	ConfigAxisThrottle ConfigAxis = 2
+	ConfigAxisRudder   ConfigAxis = 3
+)
+
+// AxisCalibration mirrors calibration.Curve plus the smoothing factor —
+// everything about an axis the phone can see and edit.
+type AxisCalibration struct {
+	DeadZone  float32
+	Expo      float32
+	Invert    bool
+	Smoothing float32
+}
+
+const axisCalibrationSize = 13
+
+func encodeAxisCalibration(buf []byte, ac AxisCalibration) {
+	binary.LittleEndian.PutUint32(buf[0:4], math.Float32bits(ac.DeadZone))
+	binary.LittleEndian.PutUint32(buf[4:8], math.Float32bits(ac.Expo))
+	buf[8] = boolByte(ac.Invert)
+	binary.LittleEndian.PutUint32(buf[9:13], math.Float32bits(ac.Smoothing))
+}
+
+func decodeAxisCalibration(b []byte) AxisCalibration {
+	return AxisCalibration{
+		DeadZone:  math.Float32frombits(binary.LittleEndian.Uint32(b[0:4])),
+		Expo:      math.Float32frombits(binary.LittleEndian.Uint32(b[4:8])),
+		Invert:    b[8] != 0,
+		Smoothing: math.Float32frombits(binary.LittleEndian.Uint32(b[9:13])),
+	}
+}
+
+const ConfigPacketSize = HeaderSize + 4*axisCalibrationSize
+
+// Config carries the server's current dead-zone/expo/invert/smoothing for
+// every axis, pushed server → phone right after HELLO_ACK and again after
+// every CONFIG_SET is applied — the same "full snapshot, not a diff"
+// approach TELEMETRY already uses.
+type Config struct {
+	Pitch, Roll, Throttle, Rudder AxisCalibration
+}
+
+func EncodeConfig(seq uint16, c Config) []byte {
+	buf := make([]byte, ConfigPacketSize)
+	encodeHeader(buf, TypeConfig, seq)
+	encodeAxisCalibration(buf[4:17], c.Pitch)
+	encodeAxisCalibration(buf[17:30], c.Roll)
+	encodeAxisCalibration(buf[30:43], c.Throttle)
+	encodeAxisCalibration(buf[43:56], c.Rudder)
+	return buf
+}
+
+func DecodeConfig(b []byte) (Config, error) {
+	if len(b) < ConfigPacketSize {
+		return Config{}, fmt.Errorf("protocol: CONFIG packet too short: %d bytes", len(b))
+	}
+	return Config{
+		Pitch:    decodeAxisCalibration(b[4:17]),
+		Roll:     decodeAxisCalibration(b[17:30]),
+		Throttle: decodeAxisCalibration(b[30:43]),
+		Rudder:   decodeAxisCalibration(b[43:56]),
+	}, nil
+}
+
+const ConfigGetPacketSize = HeaderSize
+
+// EncodeConfigGet returns a CONFIG_GET packet — no payload beyond the
+// header. Sent by the app when a settings screen opens, so it gets the
+// server's current calibration even if it missed the one CONFIG pushed
+// unprompted right after HELLO_ACK (unlike TELEMETRY, CONFIG isn't sent on
+// a recurring timer, so a late subscriber has nothing to fall back on
+// without this).
+func EncodeConfigGet(seq uint16) []byte {
+	buf := make([]byte, ConfigGetPacketSize)
+	encodeHeader(buf, TypeConfigGet, seq)
+	return buf
+}
+
+const ConfigSetPacketSize = HeaderSize + 1 + axisCalibrationSize
+
+// ConfigSet is sent phone → server to change one axis's calibration. The
+// server replies with a fresh CONFIG once applied (and persisted, if a
+// config file path is known) — there's no separate ack packet type.
+type ConfigSet struct {
+	Axis        ConfigAxis
+	Calibration AxisCalibration
+}
+
+func EncodeConfigSet(seq uint16, cs ConfigSet) []byte {
+	buf := make([]byte, ConfigSetPacketSize)
+	encodeHeader(buf, TypeConfigSet, seq)
+	buf[4] = byte(cs.Axis)
+	encodeAxisCalibration(buf[5:18], cs.Calibration)
+	return buf
+}
+
+func DecodeConfigSet(b []byte) (ConfigSet, error) {
+	if len(b) < ConfigSetPacketSize {
+		return ConfigSet{}, fmt.Errorf("protocol: CONFIG_SET packet too short: %d bytes", len(b))
+	}
+	return ConfigSet{
+		Axis:        ConfigAxis(b[4]),
+		Calibration: decodeAxisCalibration(b[5:18]),
 	}, nil
 }
