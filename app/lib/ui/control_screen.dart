@@ -170,6 +170,7 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
     final connectionStatus = ref.watch(connectionStatusProvider).valueOrNull;
     final telemetry = ref.watch(telemetryProvider).valueOrNull;
     final manualJoystick = ref.watch(manualJoystickProvider);
+    final nudgeThrottle = ref.watch(nudgeThrottleProvider);
     final layoutEditMode = ref.watch(layoutEditModeProvider);
     final gyroPaused = ref.watch(gyroPausedProvider);
 
@@ -323,6 +324,7 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
                           child: _ControlLabel(
                             label: 'TOE BRAKE',
                             child: _ToeBrake(
+                              label: 'BRK',
                               onPressedChanged: (pressed) =>
                                   _sendButton(ButtonIds.toeBrake, pressed),
                             ),
@@ -372,12 +374,19 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
                         id: 'throttle',
                         child: _ControlLabel(
                           label: 'THROTTLE',
-                          child: _ThrottleLever(
-                            onChanged: (v) => ref
-                                .read(sliderAxisProvider.notifier)
-                                .setThrottle(v),
-                            synced: telemetry?.throttlePercent,
-                          ),
+                          child: nudgeThrottle
+                              ? _ThrottleNudgeControl(
+                                  value: ref.watch(sliderAxisProvider).throttle,
+                                  onChanged: (v) => ref
+                                      .read(sliderAxisProvider.notifier)
+                                      .setThrottle(v),
+                                )
+                              : _ThrottleLever(
+                                  onChanged: (v) => ref
+                                      .read(sliderAxisProvider.notifier)
+                                      .setThrottle(v),
+                                  synced: telemetry?.throttlePercent,
+                                ),
                         ),
                       ),
                     ],
@@ -1687,8 +1696,9 @@ class _SpeedbrakeLeverState extends State<_SpeedbrakeLever> {
 /// parking brake is engaged, holding this may show no visible effect —
 /// that's the parking-brake interlock, not a bug here.
 class _ToeBrake extends StatefulWidget {
-  const _ToeBrake({required this.onPressedChanged});
+  const _ToeBrake({required this.label, required this.onPressedChanged});
 
+  final String label;
   final ValueChanged<bool> onPressedChanged;
 
   @override
@@ -1727,10 +1737,109 @@ class _ToeBrakeState extends State<_ToeBrake> {
           shape: BoxShape.circle,
         ),
         alignment: Alignment.center,
-        child: Text('BRK',
+        child: Text(widget.label,
             style:
                 TextStyle(color: _pressed ? scheme.onError : scheme.onSurface)),
       ),
+    );
+  }
+}
+
+/// A button that fires [onStep] once immediately on press, then repeatedly
+/// while held — used for the throttle nudge fallback's +/- buttons (see
+/// [_ThrottleNudgeControl]). No prior art in this file: every other button
+/// here is either a single tap ([_tapButton]) or a plain press/release
+/// ([_ToeBrake]), neither of which repeats.
+class _RepeatButton extends StatefulWidget {
+  const _RepeatButton({required this.label, required this.onStep});
+
+  final String label;
+  final VoidCallback onStep;
+
+  @override
+  State<_RepeatButton> createState() => _RepeatButtonState();
+}
+
+class _RepeatButtonState extends State<_RepeatButton> {
+  Timer? _timer;
+
+  void _start() {
+    widget.onStep();
+    _timer = Timer.periodic(
+        const Duration(milliseconds: 150), (_) => widget.onStep());
+  }
+
+  void _stop() {
+    _timer?.cancel();
+    _timer = null;
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel(); // holding while navigating away must not leak a timer
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return GestureDetector(
+      onTapDown: (_) => _start(),
+      onTapUp: (_) => _stop(),
+      onTapCancel: _stop,
+      child: Container(
+        width: 72,
+        height: 56,
+        decoration: BoxDecoration(
+          color: scheme.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        alignment: Alignment.center,
+        child: Text(widget.label,
+            style: TextStyle(fontSize: 24, color: scheme.onSurface)),
+      ),
+    );
+  }
+}
+
+/// Fallback throttle control for when the drag lever ([_ThrottleLever]) is
+/// hard to use precisely — +/- nudge the value by [_step] at a time
+/// (idle..full forward only), and holding the reverse button snaps straight
+/// to full reverse, springing back to idle on release, mirroring a real
+/// reverser lever (and how _ThrottleLever's own reverse zone already snaps
+/// back to idle). Enabled via nudgeThrottleProvider in Settings.
+class _ThrottleNudgeControl extends StatelessWidget {
+  const _ThrottleNudgeControl({required this.value, required this.onChanged});
+
+  /// 0..1 normally; -1 only while the reverse button is held.
+  final double value;
+  final ValueChanged<double> onChanged;
+
+  static const _step = 0.05;
+
+  @override
+  Widget build(BuildContext context) {
+    final forward = value.clamp(0.0, 1.0);
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(value < 0 ? 'REV' : '${(forward * 100).round()}%'),
+        const SizedBox(height: 8),
+        _RepeatButton(
+          label: '+',
+          onStep: () => onChanged((value + _step).clamp(0.0, 1.0)),
+        ),
+        const SizedBox(height: 8),
+        _RepeatButton(
+          label: '-',
+          onStep: () => onChanged((value - _step).clamp(0.0, 1.0)),
+        ),
+        const SizedBox(height: 16),
+        _ToeBrake(
+          label: 'REV',
+          onPressedChanged: (pressed) => onChanged(pressed ? -1.0 : 0.0),
+        ),
+      ],
     );
   }
 }
