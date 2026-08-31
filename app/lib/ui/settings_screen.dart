@@ -48,6 +48,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   @override
   Widget build(BuildContext context) {
     final manualJoystick = ref.watch(manualJoystickProvider);
+    final nudgeThrottle = ref.watch(nudgeThrottleProvider);
     final calibration = ref.watch(calibrationProvider).valueOrNull;
     return Scaffold(
       appBar: AppBar(title: const Text('Settings')),
@@ -92,6 +93,14 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             value: manualJoystick,
             onChanged: (v) =>
                 ref.read(manualJoystickProvider.notifier).setEnabled(v),
+          ),
+          SwitchListTile(
+            title: const Text('Nudge throttle'),
+            subtitle: const Text(
+                'Use +/- buttons instead of the throttle lever, with a hold button for reverse'),
+            value: nudgeThrottle,
+            onChanged: (v) =>
+                ref.read(nudgeThrottleProvider.notifier).setEnabled(v),
           ),
           const SizedBox(height: 24),
           const Text(
