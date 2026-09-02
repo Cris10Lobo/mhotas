@@ -34,14 +34,21 @@ type AxisConfig struct {
 	// sample) rather than a pure per-value shaping function like Curve.
 	Smoothing float64 `json:"smoothing"`
 
-	// SignedThrottle only means anything on the throttle axis (see
-	// control/simconnect/drivers.go's throttleEx1Driver and
-	// docs/milestones.md item 6): true sends the calibrated -1..1 value
-	// straight through as a raw signed axis, no reverse-arm toggle — the
-	// convention A32NX-family aircraft need instead of the default stock
-	// Asobo arm-toggle-then-positive-magnitude one. Phone-editable, same as
-	// the rest of AxisConfig's Curve/Smoothing fields, via CONFIG_SET.
-	SignedThrottle bool `json:"signed_throttle,omitempty"`
+	// SignedThrottle and SignedThrottleIdle only mean anything on the
+	// throttle axis (see control/simconnect/drivers.go's throttleEx1Driver):
+	// SimConnect's THROTTLE_AXIS_SET_EX1 has two known reverse-thrust
+	// conventions — arm/disarm via a toggle plus an always-positive
+	// magnitude (this project's default), or one continuous signed value
+	// sent straight through with no arm step. SignedThrottle picks the
+	// latter. SignedThrottleIdle is that signed value's own idle point
+	// (0 = no remap, raw signed value passes straight through) — no aircraft
+	// convention is assumed here; where "idle" actually falls on that -1..1
+	// scale is specific to whichever aircraft is loaded; this project has no
+	// way to know it, so it's a plain tunable number, not a guess baked into
+	// the code. Both phone-editable, same as the rest of AxisConfig's
+	// Curve/Smoothing fields, via CONFIG_SET.
+	SignedThrottle     bool    `json:"signed_throttle,omitempty"`
+	SignedThrottleIdle float64 `json:"signed_throttle_idle,omitempty"`
 }
 
 // ControlMapping declares how one named control (a key in Config.Controls,

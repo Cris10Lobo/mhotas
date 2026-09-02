@@ -32,6 +32,9 @@ class ButtonIds {
   static const int autopilotDisconnect = 10;
   static const int trimUp = 11;
   static const int trimDown = 12;
+  static const int throttleIncr = 13;
+  static const int throttleDecr = 14;
+  static const int throttleReverseArm = 15;
 }
 
 /// The primary flying screen, laid out to match docs/mhotas-mobile.png:
@@ -391,10 +394,13 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
                           label: 'THROTTLE',
                           child: nudgeThrottle
                               ? _ThrottleNudgeControl(
-                                  value: ref.watch(sliderAxisProvider).throttle,
-                                  onChanged: (v) => ref
-                                      .read(sliderAxisProvider.notifier)
-                                      .setThrottle(v),
+                                  throttlePercent: telemetry?.throttlePercent,
+                                  onIncr: () =>
+                                      _tapButton(ButtonIds.throttleIncr),
+                                  onDecr: () =>
+                                      _tapButton(ButtonIds.throttleDecr),
+                                  onReverseArmChanged: (pressed) => _sendButton(
+                                      ButtonIds.throttleReverseArm, pressed),
                                 )
                               : _ThrottleLever(
                                   onChanged: (v) => ref
@@ -1876,42 +1882,47 @@ class _TrimRocker extends StatelessWidget {
 }
 
 /// Fallback throttle control for when the drag lever ([_ThrottleLever]) is
-/// hard to use precisely — +/- nudge the value by [_step] at a time
-/// (idle..full forward only), and holding the reverse button snaps straight
-/// to full reverse, springing back to idle on release, mirroring a real
-/// reverser lever (and how _ThrottleLever's own reverse zone already snaps
-/// back to idle). Enabled via nudgeThrottleProvider in Settings.
+/// hard to use precisely. Unlike the lever — which computes an absolute
+/// raw axis value, and so inherits whatever throttle convention the loaded
+/// aircraft happens to need (see docs/milestones.md item 6 and its
+/// follow-up) — every input here is relative to wherever the sim's own
+/// throttle already is: +/- fire INCREASE_THROTTLE/DECREASE_THROTTLE
+/// (server/internal/control/simconnect/drivers.go's "throttle_incr"/
+/// "throttle_decr", the same SimConnect events F2/F3 use), and holding
+/// reverse only arms THROTTLE_REVERSE_THRUST_TOGGLE via
+/// "throttle_reverse_arm" — the +/- buttons then ramp reverse thrust the
+/// same way, same as a real reverser lever still using the main power
+/// lever once unlocked. No absolute position is ever computed or sent, so
+/// this is the same on every aircraft, stock or third-party. The
+/// percentage readout is the sim's own reported position (TELEMETRY,
+/// [throttlePercent]) rather than a locally-tracked guess, for the same
+/// reason. Enabled via nudgeThrottleProvider in Settings.
 class _ThrottleNudgeControl extends StatelessWidget {
-  const _ThrottleNudgeControl({required this.value, required this.onChanged});
+  const _ThrottleNudgeControl({
+    required this.throttlePercent,
+    required this.onIncr,
+    required this.onDecr,
+    required this.onReverseArmChanged,
+  });
 
-  /// 0..1 normally; -1 only while the reverse button is held.
-  final double value;
-  final ValueChanged<double> onChanged;
-
-  static const _step = 0.05;
+  final double? throttlePercent;
+  final VoidCallback onIncr;
+  final VoidCallback onDecr;
+  final ValueChanged<bool> onReverseArmChanged;
 
   @override
   Widget build(BuildContext context) {
-    final forward = value.clamp(0.0, 1.0);
+    final pct = throttlePercent ?? 0;
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Text(value < 0 ? 'REV' : '${(forward * 100).round()}%'),
+        Text(pct < 0 ? 'REV' : '${(pct.clamp(0.0, 1.0) * 100).round()}%'),
         const SizedBox(height: 8),
-        _RepeatButton(
-          label: '+',
-          onStep: () => onChanged((value + _step).clamp(0.0, 1.0)),
-        ),
+        _RepeatButton(label: '+', onStep: onIncr),
         const SizedBox(height: 8),
-        _RepeatButton(
-          label: '-',
-          onStep: () => onChanged((value - _step).clamp(0.0, 1.0)),
-        ),
+        _RepeatButton(label: '-', onStep: onDecr),
         const SizedBox(height: 16),
-        _ToeBrake(
-          label: 'REV',
-          onPressedChanged: (pressed) => onChanged(pressed ? -1.0 : 0.0),
-        ),
+        _ToeBrake(label: 'REV', onPressedChanged: onReverseArmChanged),
       ],
     );
   }

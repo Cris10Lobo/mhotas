@@ -89,6 +89,7 @@ func New(cfg config.Config, backend control.Output, log *slog.Logger, configPath
 	}
 	if setter, ok := backend.(control.SignedThrottleSetter); ok {
 		setter.SetSignedThrottle(cfg.Throttle.SignedThrottle)
+		setter.SetSignedThrottleIdle(cfg.Throttle.SignedThrottleIdle)
 	}
 	return &Server{
 		conn:            conn,
@@ -417,8 +418,9 @@ func (s *Server) handleConfigSet(addr *net.UDPAddr, data []byte) {
 			Expo:     clamp01(float64(cs.Calibration.Expo)),
 			Invert:   cs.Calibration.Invert,
 		},
-		Smoothing:      clamp01(float64(cs.Calibration.Smoothing)),
-		SignedThrottle: cs.Calibration.SignedThrottle,
+		Smoothing:          clamp01(float64(cs.Calibration.Smoothing)),
+		SignedThrottle:     cs.Calibration.SignedThrottle,
+		SignedThrottleIdle: clampSigned(float64(cs.Calibration.SignedThrottleIdle)),
 	}
 	id, ok := s.setAxisConfig(cs.Axis, ac)
 	if !ok {
@@ -432,6 +434,7 @@ func (s *Server) handleConfigSet(addr *net.UDPAddr, data []byte) {
 	if id == control.AxisThrottle {
 		if setter, ok := s.backend.(control.SignedThrottleSetter); ok {
 			setter.SetSignedThrottle(ac.SignedThrottle)
+			setter.SetSignedThrottleIdle(ac.SignedThrottleIdle)
 		}
 	}
 	if err := config.Save(s.configPath, s.currentConfig()); err != nil {
@@ -439,7 +442,7 @@ func (s *Server) handleConfigSet(addr *net.UDPAddr, data []byte) {
 	}
 	s.log.Info("config updated", "axis", id, "deadZone", ac.Curve.DeadZone,
 		"expo", ac.Curve.Expo, "invert", ac.Curve.Invert, "smoothing", ac.Smoothing,
-		"signedThrottle", ac.SignedThrottle)
+		"signedThrottle", ac.SignedThrottle, "signedThrottleIdle", ac.SignedThrottleIdle)
 	if err := s.SendConfig(); err != nil {
 		s.log.Warn("failed to send CONFIG", "err", err)
 	}
@@ -472,6 +475,21 @@ func clamp01(v float64) float64 {
 	return v
 }
 
+// clampSigned is clamp01's -1..1 counterpart, for SignedThrottleIdle — a
+// wire value, same trust-boundary reasoning as clamp01.
+func clampSigned(v float64) float64 {
+	if math.IsNaN(v) {
+		return 0
+	}
+	if v < -1 {
+		return -1
+	}
+	if v > 1 {
+		return 1
+	}
+	return v
+}
+
 // SendTelemetry pushes a TELEMETRY packet to the currently connected phone,
 // if any. Safe to call with no phone connected (no-op).
 func (s *Server) SendTelemetry(t protocol.Telemetry) error {
@@ -493,11 +511,12 @@ func (s *Server) SendConfig() error {
 	}
 	toWire := func(ac config.AxisConfig) protocol.AxisCalibration {
 		return protocol.AxisCalibration{
-			DeadZone:       float32(ac.Curve.DeadZone),
-			Expo:           float32(ac.Curve.Expo),
-			Invert:         ac.Curve.Invert,
-			Smoothing:      float32(ac.Smoothing),
-			SignedThrottle: ac.SignedThrottle,
+			DeadZone:           float32(ac.Curve.DeadZone),
+			Expo:               float32(ac.Curve.Expo),
+			Invert:             ac.Curve.Invert,
+			Smoothing:          float32(ac.Smoothing),
+			SignedThrottle:     ac.SignedThrottle,
+			SignedThrottleIdle: float32(ac.SignedThrottleIdle),
 		}
 	}
 	cfg := s.currentConfig()

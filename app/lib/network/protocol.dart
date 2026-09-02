@@ -9,7 +9,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 class ProtocolVersion {
-  static const int current = 3;
+  static const int current = 5;
 }
 
 class PacketType {
@@ -298,20 +298,21 @@ class ConfigAxis {
   static const int rudder = 3;
 }
 
-const int _axisCalibrationSize = 14;
+const int _axisCalibrationSize = 18;
 
 /// Dead-zone/expo/invert/smoothing for one axis — everything about it the
 /// phone can see and edit. Mirrors server/internal/calibration.Curve plus
-/// the smoothing factor. [signedThrottle] only means anything on the
-/// throttle axis (see settings_screen.dart's throttle-only switch and
-/// docs/milestones.md item 6) — carried on every axis to keep one shared
-/// wire block, harmless no-op for pitch/roll/rudder.
+/// the smoothing factor. [signedThrottle]/[signedThrottleIdle] only mean
+/// anything on the throttle axis (see settings_screen.dart's throttle-only
+/// controls) — carried on every axis to keep one shared wire block, harmless
+/// no-op for pitch/roll/rudder.
 class AxisCalibration {
   final double deadZone;
   final double expo;
   final bool invert;
   final double smoothing;
   final bool signedThrottle;
+  final double signedThrottleIdle;
 
   const AxisCalibration({
     required this.deadZone,
@@ -319,6 +320,7 @@ class AxisCalibration {
     required this.invert,
     required this.smoothing,
     required this.signedThrottle,
+    required this.signedThrottleIdle,
   });
 }
 
@@ -328,6 +330,7 @@ void _encodeAxisCalibration(ByteData bd, int offset, AxisCalibration ac) {
   bd.setUint8(offset + 8, ac.invert ? 1 : 0);
   bd.setFloat32(offset + 9, ac.smoothing, Endian.little);
   bd.setUint8(offset + 13, ac.signedThrottle ? 1 : 0);
+  bd.setFloat32(offset + 14, ac.signedThrottleIdle, Endian.little);
 }
 
 AxisCalibration _decodeAxisCalibration(ByteData bd, int offset) {
@@ -337,6 +340,7 @@ AxisCalibration _decodeAxisCalibration(ByteData bd, int offset) {
     invert: bd.getUint8(offset + 8) != 0,
     smoothing: bd.getFloat32(offset + 9, Endian.little),
     signedThrottle: bd.getUint8(offset + 13) != 0,
+    signedThrottleIdle: bd.getFloat32(offset + 14, Endian.little),
   );
 }
 

@@ -24,6 +24,7 @@ const (
 	driverToeBrake    = "toe_brake"    // momentary, needs both press and release
 	driverPauseToggle = "pause_toggle" // explicit target computed from Client.Paused(), not a bare toggle
 	driverSpoilerArm  = "spoiler_arm"  // explicit value + locally-tracked arm state, no telemetry readback
+	driverReverseArm  = "reverse_arm"  // momentary; shares Client.SetReverseArmed's state with throttleEx1Driver
 )
 
 // defaultMappings is every control this backend drives today, expressed as
@@ -50,6 +51,15 @@ func defaultMappings() map[string]config.ControlMapping {
 		"autopilot_disconnect": {Driver: driverKEvent, Event: "AUTOPILOT_OFF"},
 		"trim_up":              {Driver: driverKEvent, Event: "ELEV_TRIM_UP"},
 		"trim_down":            {Driver: driverKEvent, Event: "ELEV_TRIM_DN"},
+
+		// Nudge-throttle fallback (app's +/- buttons + reverse-arm hold):
+		// relative to the sim's own current engine state via the same
+		// standard SimConnect events F2/F3 use, not an absolute position on
+		// any aircraft-specific calibrated scale — unlike the "throttle"
+		// axis above, this is the same on every aircraft.
+		"throttle_incr":        {Driver: driverKEvent, Event: "INCREASE_THROTTLE"},
+		"throttle_decr":        {Driver: driverKEvent, Event: "DECREASE_THROTTLE"},
+		"throttle_reverse_arm": {Driver: driverReverseArm},
 	}
 }
 
@@ -126,6 +136,8 @@ func buildButtonDriver(client *simlink.Client, m config.ControlMapping) (control
 		return &pauseToggleDriver{client: client}, nil
 	case driverSpoilerArm:
 		return &spoilerArmDriver{client: client}, nil
+	case driverReverseArm:
+		return &reverseArmDriver{client: client}, nil
 	default:
 		return nil, fmt.Errorf("unknown button driver %q", m.Driver)
 	}
@@ -165,54 +177,55 @@ func (d *kEventButtonDriver) SetButton(pressed bool) error {
 }
 
 // throttleEx1Driver drives THROTTLE_AXIS_SET_EX1 under one of two
-// conventions, switchable live (SetSignedThrottle, via the phone's Settings
-// screen and CONFIG_SET — see docs/milestones.md item 6) rather than fixed
-// at construction, since which one's correct depends on the aircraft
-// currently loaded, not anything known when the backend was built:
+// conventions, switchable live (SetSignedThrottle/SetSignedThrottleIdle, via
+// the phone's Settings screen and CONFIG_SET) rather than fixed at
+// construction, since which one's correct — and where "idle" falls on the
+// signed scale — depends on the aircraft currently loaded, not anything
+// knowable when the backend was built:
 //
-//   - Default (signed=false): arm/disarm reverse via ToggleReverseThrust on
-//     a sign transition, then send the same idle..full raw magnitude either
+//   - Default (signed=false): arm/disarm reverse via SetReverseArmed on a
+//     sign transition, then send the same idle..full raw magnitude either
 //     way — confirmed correct via an Asobo developer forum post
 //     (devsupport.flightsimulator.com/t/throttle-set-event-ids-explanation/
-//     4571) for stock Asobo aircraft. Once armed, MSFS applies that magnitude
-//     as negative (reverse) power internally; this mode never sends a
-//     negative raw value itself.
+//     4571). Once armed, MSFS applies that magnitude as negative (reverse)
+//     power internally; this mode never sends a negative raw value itself.
 //   - Signed (signed=true): send one continuous raw signed axis, no arm
 //     event at all, via toSignedThrottleRaw (see its own doc comment) —
-//     FlyByWire's A32NX (and other addons sharing its flyPad
-//     throttle-calibration system) needs this instead of the toggle dance.
-//     Confirmed live: sending -1 (full reverse) through the default mode
-//     came out as +1 (full forward) on a real A32NX; sending idle (0)
-//     straight through as raw 0 (no remap) landed on the climb detent at
-//     ~75% power instead.
+//     some aircraft's own throttle-calibration systems expect this instead
+//     of the arm-toggle dance. idlePoint defaults to 0 (no remap, identity
+//     mapping) and is a plain tunable, not a guessed constant — this
+//     project has no way to know where a given aircraft's own calibration
+//     puts "idle" on that scale.
 type throttleEx1Driver struct {
 	client *simlink.Client
 	log    *slog.Logger
 
 	signed atomic.Bool
 
-	mu           sync.Mutex
-	reverseArmed bool
+	idleMu    sync.Mutex
+	idlePoint float64
 }
 
 func (d *throttleEx1Driver) SetSignedThrottle(signed bool) { d.signed.Store(signed) }
 
+func (d *throttleEx1Driver) SetSignedThrottleIdle(idle float64) {
+	d.idleMu.Lock()
+	d.idlePoint = idle
+	d.idleMu.Unlock()
+}
+
 func (d *throttleEx1Driver) SetAxis(value float64) error {
 	if d.signed.Load() {
-		return d.client.SetThrottle(toSignedThrottleRaw(value, simlink.AxisRange))
+		d.idleMu.Lock()
+		idle := d.idlePoint
+		d.idleMu.Unlock()
+		return d.client.SetThrottle(toSignedThrottleRaw(value, idle, simlink.AxisRange))
 	}
 
 	wantReverse := value < 0
-	d.mu.Lock()
-	if wantReverse != d.reverseArmed {
-		if err := d.client.ToggleReverseThrust(); err != nil {
-			d.log.Warn("reverse thrust arm failed", "err", err, "want", wantReverse)
-		} else {
-			d.log.Info("reverse thrust", "armed", wantReverse)
-			d.reverseArmed = wantReverse
-		}
+	if err := d.client.SetReverseArmed(wantReverse); err != nil {
+		d.log.Warn("reverse thrust arm failed", "err", err, "want", wantReverse)
 	}
-	d.mu.Unlock()
 	magnitude := value
 	if wantReverse {
 		magnitude = -value
@@ -228,6 +241,18 @@ type toeBrakeDriver struct {
 
 func (d *toeBrakeDriver) SetButton(pressed bool) error {
 	return d.client.SetToeBrakes(pressed)
+}
+
+// reverseArmDriver is the nudge-throttle fallback's hold-to-arm reverse
+// button — momentary, like toeBrakeDriver, but through
+// Client.SetReverseArmed rather than a bare toggle, so it can't desync from
+// throttleEx1Driver's own arm calls on the lever (see Client.SetReverseArmed).
+type reverseArmDriver struct {
+	client *simlink.Client
+}
+
+func (d *reverseArmDriver) SetButton(pressed bool) error {
+	return d.client.SetReverseArmed(pressed)
 }
 
 // pauseToggleDriver fires on press only, flipping whatever SimConnect's own

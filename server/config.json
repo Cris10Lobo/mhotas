@@ -27,7 +27,8 @@
     },
     "failsafe": "hold",
     "smoothing": 0,
-    "signed_throttle": true
+    "signed_throttle": true,
+    "signed_throttle_idle": -0.5476778149604797
   },
   "rudder": {
     "curve": {

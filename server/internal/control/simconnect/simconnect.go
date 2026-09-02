@@ -65,9 +65,14 @@ func (b *Backend) Close() error {
 	return b.out.Close()
 }
 
-// SetSignedThrottle implements control.SignedThrottleSetter.
+// SetSignedThrottle and SetSignedThrottleIdle implement
+// control.SignedThrottleSetter.
 func (b *Backend) SetSignedThrottle(signed bool) {
 	b.out.SetSignedThrottle(signed)
+}
+
+func (b *Backend) SetSignedThrottleIdle(idle float64) {
+	b.out.SetSignedThrottleIdle(idle)
 }
 
 // toAxisRange maps a calibrated -1..1 value to SimConnect's

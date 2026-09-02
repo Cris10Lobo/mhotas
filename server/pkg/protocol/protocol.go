@@ -13,7 +13,7 @@ import (
 // Version is the current protocol version. A HELLO carrying a different
 // version should be rejected with HelloVersionMismatch rather than silently
 // accepted.
-const Version uint8 = 3
+const Version uint8 = 5
 
 // PacketType identifies the payload that follows the 4-byte Header.
 type PacketType uint8
@@ -349,23 +349,21 @@ const (
 )
 
 // AxisCalibration mirrors calibration.Curve plus the smoothing factor —
-// everything about an axis the phone can see and edit. SignedThrottle is
-// only meaningful for the throttle axis (see
-// server/internal/control/simconnect/drivers.go's throttleEx1Driver and
-// docs/milestones.md item 6): whether the server sends a raw signed value
-// straight through (A32NX-family aircraft) instead of the default
-// arm-toggle-then-positive-magnitude convention (stock Asobo aircraft).
-// Carried on every axis, not just throttle, to keep one shared wire block —
-// harmless no-op for pitch/roll/rudder.
+// everything about an axis the phone can see and edit. SignedThrottle/
+// SignedThrottleIdle are only meaningful on the throttle axis (see
+// server/internal/control/simconnect/drivers.go's throttleEx1Driver) —
+// carried on every axis anyway to keep one shared wire block, harmless
+// no-op for pitch/roll/rudder.
 type AxisCalibration struct {
-	DeadZone       float32
-	Expo           float32
-	Invert         bool
-	Smoothing      float32
-	SignedThrottle bool
+	DeadZone           float32
+	Expo               float32
+	Invert             bool
+	Smoothing          float32
+	SignedThrottle     bool
+	SignedThrottleIdle float32
 }
 
-const axisCalibrationSize = 14
+const axisCalibrationSize = 18
 
 func encodeAxisCalibration(buf []byte, ac AxisCalibration) {
 	binary.LittleEndian.PutUint32(buf[0:4], math.Float32bits(ac.DeadZone))
@@ -373,15 +371,17 @@ func encodeAxisCalibration(buf []byte, ac AxisCalibration) {
 	buf[8] = boolByte(ac.Invert)
 	binary.LittleEndian.PutUint32(buf[9:13], math.Float32bits(ac.Smoothing))
 	buf[13] = boolByte(ac.SignedThrottle)
+	binary.LittleEndian.PutUint32(buf[14:18], math.Float32bits(ac.SignedThrottleIdle))
 }
 
 func decodeAxisCalibration(b []byte) AxisCalibration {
 	return AxisCalibration{
-		DeadZone:       math.Float32frombits(binary.LittleEndian.Uint32(b[0:4])),
-		Expo:           math.Float32frombits(binary.LittleEndian.Uint32(b[4:8])),
-		Invert:         b[8] != 0,
-		Smoothing:      math.Float32frombits(binary.LittleEndian.Uint32(b[9:13])),
-		SignedThrottle: b[13] != 0,
+		DeadZone:           math.Float32frombits(binary.LittleEndian.Uint32(b[0:4])),
+		Expo:               math.Float32frombits(binary.LittleEndian.Uint32(b[4:8])),
+		Invert:             b[8] != 0,
+		Smoothing:          math.Float32frombits(binary.LittleEndian.Uint32(b[9:13])),
+		SignedThrottle:     b[13] != 0,
+		SignedThrottleIdle: math.Float32frombits(binary.LittleEndian.Uint32(b[14:18])),
 	}
 }
 
