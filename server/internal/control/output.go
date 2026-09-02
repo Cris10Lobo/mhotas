@@ -47,6 +47,8 @@ const (
 	ButtonSpoilerDecr
 	ButtonSpoilerArm
 	ButtonAutopilotDisconnect
+	ButtonTrimUp
+	ButtonTrimDown
 )
 
 // axisNames/buttonNames back AxisByName/ButtonByName — the name a
@@ -71,6 +73,8 @@ var buttonNames = map[string]ButtonID{
 	"spoiler_decr":         ButtonSpoilerDecr,
 	"spoiler_arm":          ButtonSpoilerArm,
 	"autopilot_disconnect": ButtonAutopilotDisconnect,
+	"trim_up":              ButtonTrimUp,
+	"trim_down":            ButtonTrimDown,
 }
 
 // AxisByName resolves a config "controls" key to an AxisID, false if it
@@ -115,4 +119,15 @@ type Output interface {
 	// Close releases any backend resources (SimConnect connection, vJoy
 	// device handle, etc.).
 	Close() error
+}
+
+// SignedThrottleSetter is implemented by a backend whose throttle driver can
+// switch, live, between the two reverse-thrust conventions this project has
+// found aircraft actually use (see docs/milestones.md item 6): the default
+// stock-Asobo arm-toggle-then-positive-magnitude dance, or a raw signed
+// value sent straight through (A32NX-family aircraft). Optional — transport
+// type-asserts for it rather than requiring it on Output, so a backend with
+// nothing throttle-specific to switch (logbackend, vjoy) needs no stub.
+type SignedThrottleSetter interface {
+	SetSignedThrottle(signed bool)
 }

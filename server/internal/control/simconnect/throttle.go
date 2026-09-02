@@ -25,3 +25,41 @@ func toThrottleRaw(p float64, axisRange int32) int32 {
 	}
 	return int32((2*p - 1) * float64(axisRange))
 }
+
+// signedThrottleIdlePoint is where "idle" actually sits on the signed
+// throttle scale (see throttleEx1Driver's signed mode) — not 0. flyPad's own
+// throttle-calibration docs (docs.flybywiresim.com/aircraft/common/
+// flypados3/throttle-calibration) document -0.5 as idle's default position
+// on that same -1..1 scale (full reverse -1, reverse idle -0.7, climb 0,
+// flex/MCT 0.5, TOGA +1) for an axis with no per-controller calibration
+// entry — which a synthetic SimConnect axis always is, mhotas isn't a real
+// assigned MSFS controller. Confirmed live: sending our raw 0 for "idle"
+// landed on the climb detent (their 0.0) at ~75% power, exactly this offset.
+//
+// ponytail: hardcoded to flyPad's documented default rather than a
+// config.json field — add one if a real aircraft turns out to need a
+// different idle point.
+const signedThrottleIdlePoint = -0.5
+
+// toSignedThrottleRaw remaps this project's own idle=0/reverse<0/forward>0
+// convention onto signedThrottleIdlePoint before it reaches SetThrottle:
+// idle..full-power (0..1) stretches across idle..TOGA
+// (signedThrottleIdlePoint..1), and full-reverse..idle (-1..0) stretches
+// across full-reverse..idle (-1..signedThrottleIdlePoint) — piecewise linear
+// around the one point that isn't 0, same shape as toThrottleRaw's own fix
+// for the (different) stock-aircraft idle offset above.
+func toSignedThrottleRaw(value float64, axisRange int32) int32 {
+	if value > 1 {
+		value = 1
+	}
+	if value < -1 {
+		value = -1
+	}
+	var raw float64
+	if value >= 0 {
+		raw = signedThrottleIdlePoint + value*(1-signedThrottleIdlePoint)
+	} else {
+		raw = signedThrottleIdlePoint + value*(signedThrottleIdlePoint+1)
+	}
+	return int32(raw * float64(axisRange))
+}

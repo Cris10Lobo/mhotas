@@ -65,6 +65,11 @@ func (b *Backend) Close() error {
 	return b.out.Close()
 }
 
+// SetSignedThrottle implements control.SignedThrottleSetter.
+func (b *Backend) SetSignedThrottle(signed bool) {
+	b.out.SetSignedThrottle(signed)
+}
+
 // toAxisRange maps a calibrated -1..1 value to SimConnect's
 // -simlink.AxisRange..simlink.AxisRange integer range. Correct for
 // elevator/aileron/rudder: they're naturally centered controls, where 0

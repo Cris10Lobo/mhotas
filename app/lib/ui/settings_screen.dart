@@ -174,6 +174,7 @@ class _AxisCalibrationCardState extends ConsumerState<_AxisCalibrationCard> {
   late double _expo = widget.calibration.expo;
   late double _smoothing = widget.calibration.smoothing;
   late bool _invert = widget.calibration.invert;
+  late bool _signedThrottle = widget.calibration.signedThrottle;
 
   @override
   void didUpdateWidget(_AxisCalibrationCard old) {
@@ -186,6 +187,7 @@ class _AxisCalibrationCardState extends ConsumerState<_AxisCalibrationCard> {
     _expo = widget.calibration.expo;
     _smoothing = widget.calibration.smoothing;
     _invert = widget.calibration.invert;
+    _signedThrottle = widget.calibration.signedThrottle;
   }
 
   void _commit() {
@@ -196,6 +198,7 @@ class _AxisCalibrationCardState extends ConsumerState<_AxisCalibrationCard> {
             expo: _expo,
             invert: _invert,
             smoothing: _smoothing,
+            signedThrottle: _signedThrottle,
           ),
         ));
   }
@@ -239,6 +242,19 @@ class _AxisCalibrationCardState extends ConsumerState<_AxisCalibrationCard> {
                 _commit();
               },
             ),
+            if (widget.axis == proto.ConfigAxis.throttle)
+              SwitchListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Signed reverse thrust'),
+                subtitle: const Text(
+                    'Send lever position directly, with no separate arm '
+                    'step. Some aircraft need this instead of the default.'),
+                value: _signedThrottle,
+                onChanged: (v) {
+                  setState(() => _signedThrottle = v);
+                  _commit();
+                },
+              ),
           ],
         ),
       ),

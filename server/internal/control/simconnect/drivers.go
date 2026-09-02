@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"maps"
 	"sync"
+	"sync/atomic"
 
 	"mhotas/internal/config"
 	"mhotas/internal/control"
@@ -19,7 +20,7 @@ import (
 const (
 	driverKEvent      = "kevent"       // generic named K:EVENT, see simlink.Client.TransmitNamed
 	driverInputEvent  = "input_event"  // MSFS2024 Input Event, see simlink.Client.SetInputEvent
-	driverThrottleEx1 = "throttle_ex1" // stateful idle-range + reverse-arm throttle (see throttle.go)
+	driverThrottleEx1 = "throttle_ex1" // idle-range throttle; reverse convention switchable live, see throttleEx1Driver
 	driverToeBrake    = "toe_brake"    // momentary, needs both press and release
 	driverPauseToggle = "pause_toggle" // explicit target computed from Client.Paused(), not a bare toggle
 	driverSpoilerArm  = "spoiler_arm"  // explicit value + locally-tracked arm state, no telemetry readback
@@ -47,6 +48,8 @@ func defaultMappings() map[string]config.ControlMapping {
 		"spoiler_decr":         {Driver: driverKEvent, Event: "SPOILERS_DEC"},
 		"spoiler_arm":          {Driver: driverSpoilerArm},
 		"autopilot_disconnect": {Driver: driverKEvent, Event: "AUTOPILOT_OFF"},
+		"trim_up":              {Driver: driverKEvent, Event: "ELEV_TRIM_UP"},
+		"trim_down":            {Driver: driverKEvent, Event: "ELEV_TRIM_DN"},
 	}
 }
 
@@ -161,23 +164,44 @@ func (d *kEventButtonDriver) SetButton(pressed bool) error {
 	return d.client.TransmitNamed(d.event, 0)
 }
 
-// throttleEx1Driver drives forward and reverse thrust through a single
-// consistent path — SetThrottle (THROTTLE_AXIS_SET_EX1) for the continuous
-// value, ToggleReverseThrust to arm/disarm on a sign transition — confirmed
-// correct via an Asobo developer forum post
-// (devsupport.flightsimulator.com/t/throttle-set-event-ids-explanation/
-// 4571). Once armed, MSFS applies the same idle..full raw magnitude as
-// negative (reverse) power internally; we never send a negative raw value
-// ourselves.
+// throttleEx1Driver drives THROTTLE_AXIS_SET_EX1 under one of two
+// conventions, switchable live (SetSignedThrottle, via the phone's Settings
+// screen and CONFIG_SET — see docs/milestones.md item 6) rather than fixed
+// at construction, since which one's correct depends on the aircraft
+// currently loaded, not anything known when the backend was built:
+//
+//   - Default (signed=false): arm/disarm reverse via ToggleReverseThrust on
+//     a sign transition, then send the same idle..full raw magnitude either
+//     way — confirmed correct via an Asobo developer forum post
+//     (devsupport.flightsimulator.com/t/throttle-set-event-ids-explanation/
+//     4571) for stock Asobo aircraft. Once armed, MSFS applies that magnitude
+//     as negative (reverse) power internally; this mode never sends a
+//     negative raw value itself.
+//   - Signed (signed=true): send one continuous raw signed axis, no arm
+//     event at all, via toSignedThrottleRaw (see its own doc comment) —
+//     FlyByWire's A32NX (and other addons sharing its flyPad
+//     throttle-calibration system) needs this instead of the toggle dance.
+//     Confirmed live: sending -1 (full reverse) through the default mode
+//     came out as +1 (full forward) on a real A32NX; sending idle (0)
+//     straight through as raw 0 (no remap) landed on the climb detent at
+//     ~75% power instead.
 type throttleEx1Driver struct {
 	client *simlink.Client
 	log    *slog.Logger
+
+	signed atomic.Bool
 
 	mu           sync.Mutex
 	reverseArmed bool
 }
 
+func (d *throttleEx1Driver) SetSignedThrottle(signed bool) { d.signed.Store(signed) }
+
 func (d *throttleEx1Driver) SetAxis(value float64) error {
+	if d.signed.Load() {
+		return d.client.SetThrottle(toSignedThrottleRaw(value, simlink.AxisRange))
+	}
+
 	wantReverse := value < 0
 	d.mu.Lock()
 	if wantReverse != d.reverseArmed {

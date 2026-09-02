@@ -30,6 +30,8 @@ class ButtonIds {
   static const int spoilerDecr = 8;
   static const int spoilerArm = 9;
   static const int autopilotDisconnect = 10;
+  static const int trimUp = 11;
+  static const int trimDown = 12;
 }
 
 /// The primary flying screen, laid out to match docs/mhotas-mobile.png:
@@ -370,6 +372,19 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
                           ),
                         ),
                       ),
+                      Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: _Movable(
+                          id: 'trim',
+                          child: _ControlLabel(
+                            label: 'TRIM',
+                            child: _TrimRocker(
+                              onUp: () => _tapButton(ButtonIds.trimUp),
+                              onDown: () => _tapButton(ButtonIds.trimDown),
+                            ),
+                          ),
+                        ),
+                      ),
                       _Movable(
                         id: 'throttle',
                         child: _ControlLabel(
@@ -434,30 +449,42 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
 }
 
 /// Wraps a control so it can be dragged to a custom position while
-/// [layoutEditModeProvider] is on. Outside edit mode this renders
-/// pixel-identical to before free-position mode existed (a plain
-/// paint-time [Transform.translate] by the saved offset, zero in the
-/// common case). In edit mode, the real interactive control moves into
-/// the app's [Overlay] — positioned via [CompositedTransformFollower]
-/// linked back to an invisible anchor that stays in the normal Row/Column
-/// flow purely to reserve layout space — rather than staying inline with
-/// a paint-only offset.
+/// [layoutEditModeProvider] is on. The common case — a control that has
+/// never been moved (saved offset == [Offset.zero]) — renders
+/// pixel-identical to before free-position mode existed: [widget.child]
+/// inline, no wrapper at all. Whenever a saved offset is nonzero, *or*
+/// edit mode is on, the real interactive control instead moves into the
+/// app's [Overlay] — positioned via [CompositedTransformFollower] linked
+/// back to an invisible anchor that stays in the normal Row/Column flow
+/// purely to reserve layout space — rather than staying inline with a
+/// paint-only offset.
 ///
 /// That Overlay hop is fixing a real bug, not decoration: with a plain
-/// inline `Transform.translate`, a dragged control's *layout slot* in the
+/// inline `Transform.translate`, a moved control's *layout slot* in the
 /// Row/Column never moves, only where it paints does. Hit-testing for
 /// flex-layout siblings is based on that untouched slot — so once a
-/// dragged control's new position lands on a spot a different,
-/// *undragged* sibling still occupies (easy in a tightly packed Row),
-/// that sibling's own drag surface — still sitting exactly at its own
-/// unmoved slot — wins every future touch there, and the dragged control
-/// becomes permanently unreachable. Reported live as "some of them can't
-/// be dragged or dropped again" — exactly the controls whose new spot
-/// happened to overlap another control's original footprint. Moving the
-/// real control into the Overlay keys its hit-test box to where it
-/// *actually* is, so this class of collision can't happen — same as any
-/// two ordinarily-overlapping widgets, whichever one visually covers a
-/// point receives the touch there.
+/// moved control's new position lands on a spot a different, *unmoved*
+/// sibling still occupies (easy in a tightly packed Row), that sibling's
+/// own surface — still sitting exactly at its own unmoved slot — wins
+/// every future touch there, and the moved control becomes permanently
+/// unreachable.
+///
+/// **This was previously only fixed while actively dragging**: the
+/// Overlay used to be shown for `editMode` alone, so locking the layout
+/// (edit mode back off) dropped straight back to the same broken plain
+/// `Transform.translate` for any control still sitting at a nonzero
+/// offset — i.e. every control anyone had actually repositioned, forever
+/// after. Reported live as a repositioned control's own buttons silently
+/// doing nothing (or triggering whatever sibling's original slot they
+/// landed on) once the layout was locked, working again only after
+/// "Reset layout" zeroed every offset — the exact same collision class
+/// already fixed for mid-drag reliability, just not carried through to
+/// the locked state a drag ends in. The Overlay now stays up for *any*
+/// nonzero offset, not just while `editMode` is on; its content still
+/// branches on `editMode` — draggable-and-inert-underneath while editing,
+/// plain and fully interactive once locked. Any future addition to this
+/// screen that reuses `_Movable` gets this for free; nothing about a new
+/// control needs to account for it.
 ///
 /// The whole control is the drag surface, not a small corner handle — two
 /// earlier versions (a whole-surface drag, then a corner handle) ran into
@@ -481,24 +508,36 @@ class _MovableState extends ConsumerState<_Movable> {
   final _link = LayerLink();
   final _overlay = OverlayPortalController();
 
+  void _syncOverlay(bool editMode, Offset offset) {
+    if (editMode || offset != Offset.zero) {
+      _overlay.show();
+    } else {
+      _overlay.hide();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final editMode = ref.watch(layoutEditModeProvider);
     final offset =
         ref.watch(layoutOffsetsProvider.select((m) => m[widget.id])) ??
             Offset.zero;
+    final needsOverlay = editMode || offset != Offset.zero;
 
-    // show()/hide() as a reaction to the mode *changing*, not called
-    // unconditionally every build (which happens often — e.g. every
-    // telemetry tick) — both calls are no-ops when already in the target
-    // state, but there's no reason to invoke them that often regardless.
+    // React to either input changing, not called unconditionally every
+    // build (which happens often — e.g. every telemetry tick) — show()/
+    // hide() are no-ops when already in the target state, but there's no
+    // reason to invoke them that often regardless. Two listeners, not one,
+    // since either input alone can flip needsOverlay: editMode toggling
+    // (with whatever offset is already saved), or a drag committing a new
+    // offset while still in edit mode.
     ref.listen<bool>(layoutEditModeProvider, (previous, next) {
-      if (next) {
-        _overlay.show();
-      } else {
-        _overlay.hide();
-      }
+      _syncOverlay(next, offset);
     });
+    ref.listen<Offset?>(
+      layoutOffsetsProvider.select((m) => m[widget.id]),
+      (previous, next) => _syncOverlay(editMode, next ?? Offset.zero),
+    );
 
     return CompositedTransformTarget(
       link: _link,
@@ -518,25 +557,33 @@ class _MovableState extends ConsumerState<_Movable> {
           // the control is finally free to be its own natural size again.
           child: Align(
             alignment: Alignment.topLeft,
-            child: _DraggableControl(
-              onPanUpdate: (delta) => ref
-                  .read(layoutOffsetsProvider.notifier)
-                  .addDelta(widget.id, delta),
-              child: widget.child,
-            ),
+            // Draggable-and-inert while editing; plain and fully
+            // interactive once locked — a locked, repositioned control
+            // needs real taps to reach widget.child directly, not
+            // _DraggableControl's drag gesture/IgnorePointer wrapper,
+            // which exists only to make dragging (not tapping) work.
+            child: editMode
+                ? _DraggableControl(
+                    onPanUpdate: (delta) => ref
+                        .read(layoutOffsetsProvider.notifier)
+                        .addDelta(widget.id, delta),
+                    child: widget.child,
+                  )
+                : widget.child,
           ),
         ),
         // ponytail: renders widget.child a second time here (invisible,
         // inert) purely to reserve the same layout space and give
         // CompositedTransformTarget something to anchor to — cheaper than
-        // it sounds for ~9 lightweight controls, but it does mean e.g.
-        // _ThrottleLever's AnimationController ticks twice while in edit
-        // mode. Upgrade path if that ever matters: measure the child's
+        // it sounds for ~10 lightweight controls, but it does mean e.g.
+        // _ThrottleLever's AnimationController ticks twice whenever this is
+        // showing (edit mode, or any control sitting at a saved nonzero
+        // offset). Upgrade path if that ever matters: measure the child's
         // size once (LayoutBuilder/GlobalKey) and reserve a plain SizedBox
         // instead of rendering it for real.
-        child: editMode
+        child: needsOverlay
             ? Opacity(opacity: 0, child: IgnorePointer(child: widget.child))
-            : Transform.translate(offset: offset, child: widget.child),
+            : widget.child,
       ),
     );
   }
@@ -1798,6 +1845,32 @@ class _RepeatButtonState extends State<_RepeatButton> {
         child: Text(widget.label,
             style: TextStyle(fontSize: 24, color: scheme.onSurface)),
       ),
+    );
+  }
+}
+
+/// Pitch trim rocker — nose up/nose down, held to move continuously like a
+/// real yoke's thumb trim switch, rather than tapped to a target position
+/// (SimConnect has no "set exact trim" event usable here either, only
+/// ELEV_TRIM_UP/ELEV_TRIM_DN steps — same reasoning as flap/speedbrake).
+/// Reuses [_RepeatButton] verbatim: firing the step repeatedly while held is
+/// exactly the sim event's own documented behavior ("holding down the key
+/// will cause the trim to increment faster over time").
+class _TrimRocker extends StatelessWidget {
+  const _TrimRocker({required this.onUp, required this.onDown});
+
+  final VoidCallback onUp;
+  final VoidCallback onDown;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _RepeatButton(label: '▲', onStep: onUp),
+        const SizedBox(height: 8),
+        _RepeatButton(label: '▼', onStep: onDown),
+      ],
     );
   }
 }

@@ -66,3 +66,13 @@ func (m *MappedOutput) Close() error {
 	}
 	return m.close()
 }
+
+// SetSignedThrottle implements SignedThrottleSetter by forwarding to the
+// throttle axis's own driver, if that driver supports it (throttleEx1Driver
+// does; nothing else needs to) — a no-op otherwise, e.g. no throttle
+// mapped, or a driver kind that doesn't have this concept at all.
+func (m *MappedOutput) SetSignedThrottle(signed bool) {
+	if d, ok := m.axes[AxisThrottle].(SignedThrottleSetter); ok {
+		d.SetSignedThrottle(signed)
+	}
+}

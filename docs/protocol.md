@@ -17,7 +17,7 @@ Every packet starts with a 4-byte header:
 | Offset | Size | Field           | Notes                                              |
 |--------|------|-----------------|-----------------------------------------------------|
 | 0      | 1    | `type`          | See packet type table below                        |
-| 1      | 1    | `version`       | Protocol version, currently `2`                     |
+| 1      | 1    | `version`       | Protocol version, currently `3`                     |
 | 2      | 2    | `seq`           | uint16, per-packet-type sequence number, wraps at 65535 |
 
 ## Packet types
@@ -107,41 +107,55 @@ read-only status-tile values (airspeed/altitude/heading/vertical speed) rather t
 generic subscription scheme (arbitrary simvars from the `mrlm-net/simconnect` library's tracked set) is
 a later protocol extension, not v2.
 
-### `CONFIG` (0x07) — 56 bytes total
+### `CONFIG` (0x07) — 60 bytes total
 
-Full snapshot of the server's current dead-zone/expo/invert/smoothing for every axis, same "whole
-struct, not a diff" approach as `TELEMETRY`. Sent unprompted right after `HELLO_ACK`, again after every
-applied `CONFIG_SET`, and in reply to a `CONFIG_GET`. Failsafe policy isn't part of this — it stays a
-server-config-file-only setting, not phone-editable.
+Full snapshot of the server's current dead-zone/expo/invert/smoothing/signed-throttle for every axis,
+same "whole struct, not a diff" approach as `TELEMETRY`. Sent unprompted right after `HELLO_ACK`, again
+after every applied `CONFIG_SET`, and in reply to a `CONFIG_GET`. Failsafe policy isn't part of this — it
+stays a server-config-file-only setting, not phone-editable.
 
-Four fixed-order 13-byte axis-calibration blocks, pitch/roll/throttle/rudder:
+Four fixed-order 14-byte axis-calibration blocks, pitch/roll/throttle/rudder:
 
-| Offset (within block) | Size | Field       | Range          |
-|------------------------|------|-------------|----------------|
-| 0                       | 4    | `deadZone`  | float32, 0..1  |
-| 4                       | 4    | `expo`      | float32, 0..1  |
-| 8                       | 1    | `invert`    | uint8: 0/1     |
-| 9                       | 4    | `smoothing` | float32, 0..1  |
+| Offset (within block) | Size | Field            | Range          |
+|------------------------|------|------------------|----------------|
+| 0                       | 4    | `deadZone`       | float32, 0..1  |
+| 4                       | 4    | `expo`           | float32, 0..1  |
+| 8                       | 1    | `invert`         | uint8: 0/1     |
+| 9                       | 4    | `smoothing`      | float32, 0..1  |
+| 13                      | 1    | `signedThrottle` | uint8: 0/1     |
+
+`signedThrottle` only means anything on the `throttle` block — see "Reverse-thrust convention" below.
+Carried on every axis anyway, to keep one shared block layout; a no-op on pitch/roll/rudder.
 
 | Offset | Size | Field      |
 |--------|------|------------|
-| 4      | 13   | `pitch`    |
-| 17     | 13   | `roll`     |
-| 30     | 13   | `throttle` |
-| 43     | 13   | `rudder`   |
+| 4      | 14   | `pitch`    |
+| 18     | 14   | `roll`     |
+| 32     | 14   | `throttle` |
+| 46     | 14   | `rudder`   |
 
-### `CONFIG_SET` (0x08) — 18 bytes total
+### `CONFIG_SET` (0x08) — 19 bytes total
 
 | Offset | Size | Field         | Notes                                             |
 |--------|------|---------------|----------------------------------------------------|
 | 4      | 1    | `axis`        | 0=pitch, 1=roll, 2=throttle, 3=rudder               |
-| 5      | 13   | `calibration` | same axis-calibration block layout as `CONFIG`      |
+| 5      | 14   | `calibration` | same axis-calibration block layout as `CONFIG`      |
 
-Changes one axis's dead-zone/expo/invert/smoothing. The server clamps `deadZone`/`expo`/`smoothing` to
-`[0,1]` (a malformed or stale-client value shouldn't be able to put the calibration curve into
-undefined/NaN territory), preserves that axis's existing failsafe policy untouched, persists the full
-config back to its config file (if one was given via `-config`; a no-config-file run just applies the
-change for the session), and replies with a fresh `CONFIG` — there's no separate ack packet type.
+Changes one axis's dead-zone/expo/invert/smoothing/signed-throttle. The server clamps
+`deadZone`/`expo`/`smoothing` to `[0,1]` (a malformed or stale-client value shouldn't be able to put the
+calibration curve into undefined/NaN territory), preserves that axis's existing failsafe policy
+untouched, persists the full config back to its config file (if one was given via `-config`; a
+no-config-file run just applies the change for the session), and replies with a fresh `CONFIG` — there's
+no separate ack packet type.
+
+#### Reverse-thrust convention (`signedThrottle`, throttle axis only)
+
+Different aircraft expect different things on `THROTTLE_AXIS_SET_EX1` for reverse thrust (see
+`docs/milestones.md` item 6): stock Asobo aircraft want an arm/disarm toggle plus an always-positive
+magnitude, while FlyByWire's A32NX (and other addons sharing its flyPad throttle-calibration system) want
+the calibrated `-1..1` value sent straight through as one continuous signed value, with no arm step.
+`signedThrottle = false` (default) is the former; `true` is the latter. The phone's Settings screen
+exposes this as a single switch on the Throttle calibration card, sent like any other calibration edit.
 
 ### `CONFIG_GET` (0x09) — 4 bytes total (header only)
 

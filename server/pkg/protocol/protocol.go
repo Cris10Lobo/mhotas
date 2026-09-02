@@ -13,7 +13,7 @@ import (
 // Version is the current protocol version. A HELLO carrying a different
 // version should be rejected with HelloVersionMismatch rather than silently
 // accepted.
-const Version uint8 = 2
+const Version uint8 = 3
 
 // PacketType identifies the payload that follows the 4-byte Header.
 type PacketType uint8
@@ -349,29 +349,39 @@ const (
 )
 
 // AxisCalibration mirrors calibration.Curve plus the smoothing factor —
-// everything about an axis the phone can see and edit.
+// everything about an axis the phone can see and edit. SignedThrottle is
+// only meaningful for the throttle axis (see
+// server/internal/control/simconnect/drivers.go's throttleEx1Driver and
+// docs/milestones.md item 6): whether the server sends a raw signed value
+// straight through (A32NX-family aircraft) instead of the default
+// arm-toggle-then-positive-magnitude convention (stock Asobo aircraft).
+// Carried on every axis, not just throttle, to keep one shared wire block —
+// harmless no-op for pitch/roll/rudder.
 type AxisCalibration struct {
-	DeadZone  float32
-	Expo      float32
-	Invert    bool
-	Smoothing float32
+	DeadZone       float32
+	Expo           float32
+	Invert         bool
+	Smoothing      float32
+	SignedThrottle bool
 }
 
-const axisCalibrationSize = 13
+const axisCalibrationSize = 14
 
 func encodeAxisCalibration(buf []byte, ac AxisCalibration) {
 	binary.LittleEndian.PutUint32(buf[0:4], math.Float32bits(ac.DeadZone))
 	binary.LittleEndian.PutUint32(buf[4:8], math.Float32bits(ac.Expo))
 	buf[8] = boolByte(ac.Invert)
 	binary.LittleEndian.PutUint32(buf[9:13], math.Float32bits(ac.Smoothing))
+	buf[13] = boolByte(ac.SignedThrottle)
 }
 
 func decodeAxisCalibration(b []byte) AxisCalibration {
 	return AxisCalibration{
-		DeadZone:  math.Float32frombits(binary.LittleEndian.Uint32(b[0:4])),
-		Expo:      math.Float32frombits(binary.LittleEndian.Uint32(b[4:8])),
-		Invert:    b[8] != 0,
-		Smoothing: math.Float32frombits(binary.LittleEndian.Uint32(b[9:13])),
+		DeadZone:       math.Float32frombits(binary.LittleEndian.Uint32(b[0:4])),
+		Expo:           math.Float32frombits(binary.LittleEndian.Uint32(b[4:8])),
+		Invert:         b[8] != 0,
+		Smoothing:      math.Float32frombits(binary.LittleEndian.Uint32(b[9:13])),
+		SignedThrottle: b[13] != 0,
 	}
 }
 
@@ -388,10 +398,10 @@ type Config struct {
 func EncodeConfig(seq uint16, c Config) []byte {
 	buf := make([]byte, ConfigPacketSize)
 	encodeHeader(buf, TypeConfig, seq)
-	encodeAxisCalibration(buf[4:17], c.Pitch)
-	encodeAxisCalibration(buf[17:30], c.Roll)
-	encodeAxisCalibration(buf[30:43], c.Throttle)
-	encodeAxisCalibration(buf[43:56], c.Rudder)
+	encodeAxisCalibration(buf[4+0*axisCalibrationSize:], c.Pitch)
+	encodeAxisCalibration(buf[4+1*axisCalibrationSize:], c.Roll)
+	encodeAxisCalibration(buf[4+2*axisCalibrationSize:], c.Throttle)
+	encodeAxisCalibration(buf[4+3*axisCalibrationSize:], c.Rudder)
 	return buf
 }
 
@@ -400,10 +410,10 @@ func DecodeConfig(b []byte) (Config, error) {
 		return Config{}, fmt.Errorf("protocol: CONFIG packet too short: %d bytes", len(b))
 	}
 	return Config{
-		Pitch:    decodeAxisCalibration(b[4:17]),
-		Roll:     decodeAxisCalibration(b[17:30]),
-		Throttle: decodeAxisCalibration(b[30:43]),
-		Rudder:   decodeAxisCalibration(b[43:56]),
+		Pitch:    decodeAxisCalibration(b[4+0*axisCalibrationSize:]),
+		Roll:     decodeAxisCalibration(b[4+1*axisCalibrationSize:]),
+		Throttle: decodeAxisCalibration(b[4+2*axisCalibrationSize:]),
+		Rudder:   decodeAxisCalibration(b[4+3*axisCalibrationSize:]),
 	}, nil
 }
 
@@ -435,7 +445,7 @@ func EncodeConfigSet(seq uint16, cs ConfigSet) []byte {
 	buf := make([]byte, ConfigSetPacketSize)
 	encodeHeader(buf, TypeConfigSet, seq)
 	buf[4] = byte(cs.Axis)
-	encodeAxisCalibration(buf[5:18], cs.Calibration)
+	encodeAxisCalibration(buf[5:], cs.Calibration)
 	return buf
 }
 
@@ -445,6 +455,6 @@ func DecodeConfigSet(b []byte) (ConfigSet, error) {
 	}
 	return ConfigSet{
 		Axis:        ConfigAxis(b[4]),
-		Calibration: decodeAxisCalibration(b[5:18]),
+		Calibration: decodeAxisCalibration(b[5:]),
 	}, nil
 }
