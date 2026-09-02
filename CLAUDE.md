@@ -145,6 +145,23 @@ from the sensor stream into the send loop, since it updates far more often than 
 `control_screen.dart` (the X-Plane-Mobile-style flying screen), `settings_screen.dart` (currently a
 placeholder — calibration tuning lives in the server's config file until a later phase).
 
+### Every draggable control on the flying screen must go through `_Movable`
+
+`control_screen.dart`'s free-position layout (drag a control anywhere, offset persisted) wraps each
+draggable widget in `_Movable`. Positioning a widget any other way — a bare `Transform.translate` by a
+saved offset, most obviously — silently reintroduces a real, already-hit-twice bug: `Transform.translate`
+moves where a widget *paints* but not its *layout slot*, and Flex (Row/Column) hit-testing is keyed to
+that untouched slot. Once a moved widget's new position overlaps a different, unmoved sibling's original
+footprint, that sibling's own surface — still sitting exactly at its own slot — steals every future touch
+there, and the moved widget's own taps silently do nothing (or trigger whatever it's now covering)
+instead. First hit as "some dragged controls become unreachable" (Phase 6), then again as a brand-new
+control's buttons doing nothing once dragged and locked (Phase 10, the trim rocker) — because the first
+fix only kept the Overlay active *while actively dragging*, not once the layout was locked back with a
+nonzero offset still in effect. `_Movable` now keeps the Overlay-based, actually-correctly-hit-tested
+positioning active for *any* nonzero saved offset, not just mid-drag, so every current and future control
+that goes through it is covered automatically — see `_Movable`'s own doc comment in `control_screen.dart`
+for the mechanism. Do not hand-roll positioning for a new control on this screen.
+
 ## Distribution
 
 Open-source (MIT), not published to app stores — the app is meant to be sideloaded.
