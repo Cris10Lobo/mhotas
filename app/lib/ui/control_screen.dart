@@ -30,6 +30,8 @@ class ButtonIds {
   static const int spoilerDecr = 8;
   static const int spoilerArm = 9;
   static const int autopilotDisconnect = 10;
+  static const int trimUp = 11;
+  static const int trimDown = 12;
 }
 
 /// The primary flying screen, laid out to match docs/mhotas-mobile.png:
@@ -366,6 +368,19 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
                             child: _AutopilotDisconnectButton(
                               onTap: () =>
                                   _tapButton(ButtonIds.autopilotDisconnect),
+                            ),
+                          ),
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: _Movable(
+                          id: 'trim',
+                          child: _ControlLabel(
+                            label: 'TRIM',
+                            child: _TrimRocker(
+                              onUp: () => _tapButton(ButtonIds.trimUp),
+                              onDown: () => _tapButton(ButtonIds.trimDown),
                             ),
                           ),
                         ),
@@ -1798,6 +1813,32 @@ class _RepeatButtonState extends State<_RepeatButton> {
         child: Text(widget.label,
             style: TextStyle(fontSize: 24, color: scheme.onSurface)),
       ),
+    );
+  }
+}
+
+/// Pitch trim rocker — nose up/nose down, held to move continuously like a
+/// real yoke's thumb trim switch, rather than tapped to a target position
+/// (SimConnect has no "set exact trim" event usable here either, only
+/// ELEV_TRIM_UP/ELEV_TRIM_DN steps — same reasoning as flap/speedbrake).
+/// Reuses [_RepeatButton] verbatim: firing the step repeatedly while held is
+/// exactly the sim event's own documented behavior ("holding down the key
+/// will cause the trim to increment faster over time").
+class _TrimRocker extends StatelessWidget {
+  const _TrimRocker({required this.onUp, required this.onDown});
+
+  final VoidCallback onUp;
+  final VoidCallback onDown;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _RepeatButton(label: '▲', onStep: onUp),
+        const SizedBox(height: 8),
+        _RepeatButton(label: '▼', onStep: onDown),
+      ],
     );
   }
 }

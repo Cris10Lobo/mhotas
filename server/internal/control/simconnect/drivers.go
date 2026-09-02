@@ -47,6 +47,8 @@ func defaultMappings() map[string]config.ControlMapping {
 		"spoiler_decr":         {Driver: driverKEvent, Event: "SPOILERS_DEC"},
 		"spoiler_arm":          {Driver: driverSpoilerArm},
 		"autopilot_disconnect": {Driver: driverKEvent, Event: "AUTOPILOT_OFF"},
+		"trim_up":              {Driver: driverKEvent, Event: "ELEV_TRIM_UP"},
+		"trim_down":            {Driver: driverKEvent, Event: "ELEV_TRIM_DN"},
 	}
 }
 

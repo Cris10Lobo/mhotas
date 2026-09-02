@@ -47,6 +47,8 @@ const (
 	ButtonSpoilerDecr
 	ButtonSpoilerArm
 	ButtonAutopilotDisconnect
+	ButtonTrimUp
+	ButtonTrimDown
 )
 
 // axisNames/buttonNames back AxisByName/ButtonByName — the name a
@@ -71,6 +73,8 @@ var buttonNames = map[string]ButtonID{
 	"spoiler_decr":         ButtonSpoilerDecr,
 	"spoiler_arm":          ButtonSpoilerArm,
 	"autopilot_disconnect": ButtonAutopilotDisconnect,
+	"trim_up":              ButtonTrimUp,
+	"trim_down":            ButtonTrimDown,
 }
 
 // AxisByName resolves a config "controls" key to an AxisID, false if it
