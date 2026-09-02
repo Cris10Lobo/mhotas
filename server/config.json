@@ -1,16 +1,41 @@
 {
+  "listen_port": 9750,
+  "failsafe_timeout_ms": 500,
   "pitch": {
-    "curve": { "dead_zone": 0.05, "expo": 0.6 },
+    "curve": {
+      "dead_zone": 0.05,
+      "expo": 0.6,
+      "invert": false
+    },
+    "failsafe": "neutral",
     "smoothing": 0.5
   },
   "roll": {
-    "curve": { "dead_zone": 0.05, "expo": 0.6, "invert": false },
+    "curve": {
+      "dead_zone": 0.05,
+      "expo": 0.6,
+      "invert": false
+    },
+    "failsafe": "neutral",
     "smoothing": 0.5
   },
-  "rudder": {
-    "curve": { "invert": true }
-  },
   "throttle": {
-    "curve": { "dead_zone": 0.05 }
+    "curve": {
+      "dead_zone": 0,
+      "expo": 0,
+      "invert": false
+    },
+    "failsafe": "hold",
+    "smoothing": 0,
+    "signed_throttle": true
+  },
+  "rudder": {
+    "curve": {
+      "dead_zone": 0,
+      "expo": 0,
+      "invert": true
+    },
+    "failsafe": "neutral",
+    "smoothing": 0
   }
 }

@@ -120,3 +120,14 @@ type Output interface {
 	// device handle, etc.).
 	Close() error
 }
+
+// SignedThrottleSetter is implemented by a backend whose throttle driver can
+// switch, live, between the two reverse-thrust conventions this project has
+// found aircraft actually use (see docs/milestones.md item 6): the default
+// stock-Asobo arm-toggle-then-positive-magnitude dance, or a raw signed
+// value sent straight through (A32NX-family aircraft). Optional — transport
+// type-asserts for it rather than requiring it on Output, so a backend with
+// nothing throttle-specific to switch (logbackend, vjoy) needs no stub.
+type SignedThrottleSetter interface {
+	SetSignedThrottle(signed bool)
+}

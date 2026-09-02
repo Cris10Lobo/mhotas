@@ -9,7 +9,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 class ProtocolVersion {
-  static const int current = 2;
+  static const int current = 3;
 }
 
 class PacketType {
@@ -298,22 +298,27 @@ class ConfigAxis {
   static const int rudder = 3;
 }
 
-const int _axisCalibrationSize = 13;
+const int _axisCalibrationSize = 14;
 
 /// Dead-zone/expo/invert/smoothing for one axis — everything about it the
 /// phone can see and edit. Mirrors server/internal/calibration.Curve plus
-/// the smoothing factor.
+/// the smoothing factor. [signedThrottle] only means anything on the
+/// throttle axis (see settings_screen.dart's throttle-only switch and
+/// docs/milestones.md item 6) — carried on every axis to keep one shared
+/// wire block, harmless no-op for pitch/roll/rudder.
 class AxisCalibration {
   final double deadZone;
   final double expo;
   final bool invert;
   final double smoothing;
+  final bool signedThrottle;
 
   const AxisCalibration({
     required this.deadZone,
     required this.expo,
     required this.invert,
     required this.smoothing,
+    required this.signedThrottle,
   });
 }
 
@@ -322,6 +327,7 @@ void _encodeAxisCalibration(ByteData bd, int offset, AxisCalibration ac) {
   bd.setFloat32(offset + 4, ac.expo, Endian.little);
   bd.setUint8(offset + 8, ac.invert ? 1 : 0);
   bd.setFloat32(offset + 9, ac.smoothing, Endian.little);
+  bd.setUint8(offset + 13, ac.signedThrottle ? 1 : 0);
 }
 
 AxisCalibration _decodeAxisCalibration(ByteData bd, int offset) {
@@ -330,6 +336,7 @@ AxisCalibration _decodeAxisCalibration(ByteData bd, int offset) {
     expo: bd.getFloat32(offset + 4, Endian.little),
     invert: bd.getUint8(offset + 8) != 0,
     smoothing: bd.getFloat32(offset + 9, Endian.little),
+    signedThrottle: bd.getUint8(offset + 13) != 0,
   );
 }
 

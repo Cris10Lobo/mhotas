@@ -33,6 +33,15 @@ type AxisConfig struct {
 	// transport.Server, after Curve — it's temporal (needs the previous
 	// sample) rather than a pure per-value shaping function like Curve.
 	Smoothing float64 `json:"smoothing"`
+
+	// SignedThrottle only means anything on the throttle axis (see
+	// control/simconnect/drivers.go's throttleEx1Driver and
+	// docs/milestones.md item 6): true sends the calibrated -1..1 value
+	// straight through as a raw signed axis, no reverse-arm toggle — the
+	// convention A32NX-family aircraft need instead of the default stock
+	// Asobo arm-toggle-then-positive-magnitude one. Phone-editable, same as
+	// the rest of AxisConfig's Curve/Smoothing fields, via CONFIG_SET.
+	SignedThrottle bool `json:"signed_throttle,omitempty"`
 }
 
 // ControlMapping declares how one named control (a key in Config.Controls,

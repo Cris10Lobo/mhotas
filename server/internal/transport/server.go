@@ -87,6 +87,9 @@ func New(cfg config.Config, backend control.Output, log *slog.Logger, configPath
 	if err != nil {
 		return nil, fmt.Errorf("transport: listen on port %d: %w", cfg.ListenPort, err)
 	}
+	if setter, ok := backend.(control.SignedThrottleSetter); ok {
+		setter.SetSignedThrottle(cfg.Throttle.SignedThrottle)
+	}
 	return &Server{
 		conn:            conn,
 		backend:         backend,
@@ -414,18 +417,29 @@ func (s *Server) handleConfigSet(addr *net.UDPAddr, data []byte) {
 			Expo:     clamp01(float64(cs.Calibration.Expo)),
 			Invert:   cs.Calibration.Invert,
 		},
-		Smoothing: clamp01(float64(cs.Calibration.Smoothing)),
+		Smoothing:      clamp01(float64(cs.Calibration.Smoothing)),
+		SignedThrottle: cs.Calibration.SignedThrottle,
 	}
 	id, ok := s.setAxisConfig(cs.Axis, ac)
 	if !ok {
 		s.log.Warn("bad CONFIG_SET axis", "axis", cs.Axis, "from", addr)
 		return
 	}
+	// Only throttle's driver has anything to switch (see
+	// control.SignedThrottleSetter) — a no-op type-assertion failure for
+	// every other axis and every backend without a throttle driver that
+	// cares (logbackend, vjoy).
+	if id == control.AxisThrottle {
+		if setter, ok := s.backend.(control.SignedThrottleSetter); ok {
+			setter.SetSignedThrottle(ac.SignedThrottle)
+		}
+	}
 	if err := config.Save(s.configPath, s.currentConfig()); err != nil {
 		s.log.Warn("failed to persist config", "err", err)
 	}
 	s.log.Info("config updated", "axis", id, "deadZone", ac.Curve.DeadZone,
-		"expo", ac.Curve.Expo, "invert", ac.Curve.Invert, "smoothing", ac.Smoothing)
+		"expo", ac.Curve.Expo, "invert", ac.Curve.Invert, "smoothing", ac.Smoothing,
+		"signedThrottle", ac.SignedThrottle)
 	if err := s.SendConfig(); err != nil {
 		s.log.Warn("failed to send CONFIG", "err", err)
 	}
@@ -479,10 +493,11 @@ func (s *Server) SendConfig() error {
 	}
 	toWire := func(ac config.AxisConfig) protocol.AxisCalibration {
 		return protocol.AxisCalibration{
-			DeadZone:  float32(ac.Curve.DeadZone),
-			Expo:      float32(ac.Curve.Expo),
-			Invert:    ac.Curve.Invert,
-			Smoothing: float32(ac.Smoothing),
+			DeadZone:       float32(ac.Curve.DeadZone),
+			Expo:           float32(ac.Curve.Expo),
+			Invert:         ac.Curve.Invert,
+			Smoothing:      float32(ac.Smoothing),
+			SignedThrottle: ac.SignedThrottle,
 		}
 	}
 	cfg := s.currentConfig()
