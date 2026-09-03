@@ -175,6 +175,7 @@ class _AxisCalibrationCardState extends ConsumerState<_AxisCalibrationCard> {
   late double _smoothing = widget.calibration.smoothing;
   late bool _invert = widget.calibration.invert;
   late bool _signedThrottle = widget.calibration.signedThrottle;
+  late double _signedThrottleIdle = widget.calibration.signedThrottleIdle;
 
   @override
   void didUpdateWidget(_AxisCalibrationCard old) {
@@ -188,6 +189,7 @@ class _AxisCalibrationCardState extends ConsumerState<_AxisCalibrationCard> {
     _smoothing = widget.calibration.smoothing;
     _invert = widget.calibration.invert;
     _signedThrottle = widget.calibration.signedThrottle;
+    _signedThrottleIdle = widget.calibration.signedThrottleIdle;
   }
 
   void _commit() {
@@ -199,6 +201,7 @@ class _AxisCalibrationCardState extends ConsumerState<_AxisCalibrationCard> {
             invert: _invert,
             smoothing: _smoothing,
             signedThrottle: _signedThrottle,
+            signedThrottleIdle: _signedThrottleIdle,
           ),
         ));
   }
@@ -242,7 +245,7 @@ class _AxisCalibrationCardState extends ConsumerState<_AxisCalibrationCard> {
                 _commit();
               },
             ),
-            if (widget.axis == proto.ConfigAxis.throttle)
+            if (widget.axis == proto.ConfigAxis.throttle) ...[
               SwitchListTile(
                 contentPadding: EdgeInsets.zero,
                 title: const Text('Signed reverse thrust'),
@@ -255,6 +258,16 @@ class _AxisCalibrationCardState extends ConsumerState<_AxisCalibrationCard> {
                   _commit();
                 },
               ),
+              if (_signedThrottle)
+                _CalibrationSlider(
+                  label: 'Idle point',
+                  value: _signedThrottleIdle,
+                  min: -1,
+                  max: 1,
+                  onChanged: (v) => setState(() => _signedThrottleIdle = v),
+                  onChangeEnd: (_) => _commit(),
+                ),
+            ],
           ],
         ),
       ),
@@ -268,29 +281,39 @@ class _CalibrationSlider extends StatelessWidget {
     required this.value,
     required this.onChanged,
     required this.onChangeEnd,
+    this.min = 0,
+    this.max = 1,
   });
 
   final String label;
   final double value;
+  final double min;
+  final double max;
   final ValueChanged<double> onChanged;
   final ValueChanged<double> onChangeEnd;
 
   @override
   Widget build(BuildContext context) {
+    // 0..1 sliders (dead-zone/expo/smoothing) read as a percentage; any
+    // other range (e.g. the signed-throttle idle point, -1..1) reads as a
+    // plain decimal — a "%" on a value that isn't a fraction of 1 would be
+    // misleading.
+    final display = min == 0 && max == 1
+        ? '${(value * 100).round()}%'
+        : value.toStringAsFixed(2);
     return Row(
       children: [
         SizedBox(width: 90, child: Text(label)),
         Expanded(
           child: Slider(
-            value: value.clamp(0, 1),
+            value: value.clamp(min, max),
+            min: min,
+            max: max,
             onChanged: onChanged,
             onChangeEnd: onChangeEnd,
           ),
         ),
-        SizedBox(
-          width: 40,
-          child: Text('${(value * 100).round()}%', textAlign: TextAlign.end),
-        ),
+        SizedBox(width: 48, child: Text(display, textAlign: TextAlign.end)),
       ],
     );
   }

@@ -89,6 +89,16 @@ type Client struct {
 	// mrlm-net/simconnect manager docs).
 	inputEventsMu sync.Mutex
 	inputEvents   map[string]uint64
+
+	// reverseArmedMu/reverseArmed back SetReverseArmed — single source of
+	// truth for THROTTLE_REVERSE_THRUST_TOGGLE's arm state, shared by every
+	// caller (throttleEx1Driver's axis-sign-transition arm and the discrete
+	// reverse-arm button both go through this). Two independent callers
+	// each guessing their own local arm state and calling the bare toggle
+	// directly is exactly how they'd desync and flip each other's work —
+	// see docs/milestones.md item 6's follow-up.
+	reverseArmedMu sync.Mutex
+	reverseArmed   bool
 }
 
 // aircraftStateData mirrors SimConnect's fixed struct layout for the
@@ -500,17 +510,33 @@ func (c *Client) SetAileron(raw int32) error { return c.transmit(eventAxisAilero
 // consistent write path avoids that.
 func (c *Client) SetThrottle(raw int32) error { return c.transmitEx1(eventThrottleEx1, uint32(raw)) }
 
-// ToggleReverseThrust fires THROTTLE_REVERSE_THRUST_TOGGLE, which arms or
-// disarms reverse thrust for THROTTLE_AXIS_SET_EX1 (each call flips the
-// state — call on a sign transition, not continuously). Confirmed by an
-// Asobo developer on the MSFS DevSupport forum (devsupport.flightsimulator
+// SetReverseArmed fires THROTTLE_REVERSE_THRUST_TOGGLE to reach the wanted
+// arm state for THROTTLE_AXIS_SET_EX1 — each underlying event call flips
+// the sim's state, so this only actually fires it on a real transition
+// (tracked in reverseArmed), a no-op otherwise. Confirmed by an Asobo
+// developer on the MSFS DevSupport forum (devsupport.flightsimulator
 // .com/t/throttle-set-event-ids-explanation/4571): "SET_EX supports
 // reverse thrust (after setting KEY_THROTTLE_REVERSE_THRUST_TOGGLE)... the
 // value of THROTTLE1_AXIS_SET_EX1 will be -1" — this toggle is EX1's
 // actual documented arm mechanism, not the separate/older
 // SET_REVERSE_THRUST_ON/OFF flag event (which doesn't reconcile with EX1
-// and was the earlier cause of a stuck-in-reverse state).
-func (c *Client) ToggleReverseThrust() error { return c.transmit(eventReverseToggle, 0) }
+// and was the earlier cause of a stuck-in-reverse state). One shared
+// tracked state on Client, not duplicated per-caller: throttleEx1Driver
+// (arming on an axis sign transition) and a discrete reverse-arm button
+// both call this, and each guessing its own local arm state independently
+// is exactly how they'd flip each other's work without either noticing.
+func (c *Client) SetReverseArmed(want bool) error {
+	c.reverseArmedMu.Lock()
+	defer c.reverseArmedMu.Unlock()
+	if want == c.reverseArmed {
+		return nil
+	}
+	if err := c.transmit(eventReverseToggle, 0); err != nil {
+		return err
+	}
+	c.reverseArmed = want
+	return nil
+}
 
 // SetRudder sends a raw AXIS_RUDDER_SET value, range -AxisRange..AxisRange.
 func (c *Client) SetRudder(raw int32) error { return c.transmit(eventAxisRudder, uint32(raw)) }
