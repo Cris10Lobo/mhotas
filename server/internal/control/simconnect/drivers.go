@@ -230,7 +230,7 @@ func (d *throttleEx1Driver) SetAxis(value float64) error {
 	if wantReverse {
 		magnitude = -value
 	}
-	return d.client.SetThrottle(toThrottleRaw(magnitude, simlink.AxisRange))
+	return d.client.SetThrottle(toSignedThrottleRaw(magnitude, stockIdlePoint, simlink.AxisRange))
 }
 
 // toeBrakeDriver is momentary (apply while held, release on lift), unlike

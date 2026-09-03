@@ -2,24 +2,6 @@ package simconnect
 
 import "testing"
 
-func TestToThrottleRaw(t *testing.T) {
-	cases := []struct {
-		p    float64
-		want int32
-	}{
-		{p: 0, want: -16383},  // idle
-		{p: 1, want: 16383},   // full power
-		{p: 0.5, want: 0},     // midpoint, NOT idle — the whole point of this mapping
-		{p: -1, want: -16383}, // clamps
-		{p: 2, want: 16383},   // clamps
-	}
-	for _, c := range cases {
-		if got := toThrottleRaw(c.p, 16383); got != c.want {
-			t.Errorf("toThrottleRaw(%v) = %v, want %v", c.p, got, c.want)
-		}
-	}
-}
-
 func TestToSignedThrottleRaw(t *testing.T) {
 	cases := []struct {
 		value, idlePoint float64
@@ -35,6 +17,14 @@ func TestToSignedThrottleRaw(t *testing.T) {
 		{value: -0.5, idlePoint: -0.5, want: -12287}, // halfway to full reverse from idle
 		{value: 2, idlePoint: -0.5, want: 16383},     // clamps
 		{value: -2, idlePoint: -0.5, want: -16383},   // clamps
+
+		// stockIdlePoint (-1): the arm-toggle convention's fixed mapping,
+		// what used to be a separate toThrottleRaw function — idle at the
+		// negative extreme, midpoint NOT idle.
+		{value: 0, idlePoint: stockIdlePoint, want: -16383}, // idle
+		{value: 1, idlePoint: stockIdlePoint, want: 16383},  // full power
+		{value: 0.5, idlePoint: stockIdlePoint, want: 0},    // midpoint, NOT idle
+		{value: 2, idlePoint: stockIdlePoint, want: 16383},  // clamps
 	}
 	for _, c := range cases {
 		if got := toSignedThrottleRaw(c.value, c.idlePoint, 16383); got != c.want {
