@@ -17,10 +17,6 @@ type rawState struct {
 	ThrottleLeverPercent   int32
 	ParkingBrakeSet        int32
 	Paused                 bool
-	AirspeedKnots          float64
-	AltitudeFeet           float64
-	HeadingDegrees         float64
-	VerticalSpeedFpm       float64
 }
 
 func toTelemetry(r rawState) protocol.Telemetry {
@@ -31,10 +27,6 @@ func toTelemetry(r rawState) protocol.Telemetry {
 		ParkingBrakeSet:    r.ParkingBrakeSet != 0,
 		ThrottlePercent:    percentToUnit(r.ThrottleLeverPercent),
 		Paused:             r.Paused,
-		AirspeedKnots:      float32(r.AirspeedKnots),
-		AltitudeFeet:       float32(r.AltitudeFeet),
-		HeadingDegrees:     float32(r.HeadingDegrees),
-		VerticalSpeedFpm:   float32(r.VerticalSpeedFpm),
 	}
 }
 

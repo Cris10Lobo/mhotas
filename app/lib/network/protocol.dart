@@ -9,7 +9,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 class ProtocolVersion {
-  static const int current = 5;
+  static const int current = 6;
 }
 
 class PacketType {
@@ -211,12 +211,10 @@ class GearPosition {
   static const int transit = 2;
 }
 
-const int telemetryPacketSize = headerSize + 26;
+const int telemetryPacketSize = headerSize + 10;
 
-/// Live aircraft state read from SimConnect, pushed server → phone. v1
-/// shipped this fixed small struct rather than a generic key/value simvar
-/// schema; v2 appends 4 status-tile fields (airspeed/altitude/heading/
-/// vertical speed) to that same fixed struct rather than switching schemes.
+/// Live aircraft state read from SimConnect, pushed server → phone. A fixed
+/// small struct rather than a generic key/value simvar schema.
 ///
 /// Every field here exists to close a "double lane" gap for something the
 /// phone can also command or display: an in-sim change (mouse, keyboard,
@@ -242,18 +240,6 @@ class Telemetry {
   /// can't see an external pause/unpause.
   final bool paused;
 
-  /// AIRSPEED INDICATED, knots.
-  final double airspeedKnots;
-
-  /// INDICATED ALTITUDE, feet.
-  final double altitudeFeet;
-
-  /// PLANE HEADING DEGREES MAGNETIC, degrees.
-  final double headingDegrees;
-
-  /// VERTICAL SPEED, feet/minute.
-  final double verticalSpeedFpm;
-
   const Telemetry({
     required this.flapHandleIndex,
     required this.flapHandleIndexMax,
@@ -261,10 +247,6 @@ class Telemetry {
     required this.parkingBrakeSet,
     required this.throttlePercent,
     required this.paused,
-    required this.airspeedKnots,
-    required this.altitudeFeet,
-    required this.headingDegrees,
-    required this.verticalSpeedFpm,
   });
 }
 
@@ -280,10 +262,6 @@ Telemetry decodeTelemetry(Uint8List b) {
     parkingBrakeSet: b[7] != 0,
     throttlePercent: bd.getFloat32(8, Endian.little),
     paused: b[12] != 0,
-    airspeedKnots: bd.getFloat32(14, Endian.little),
-    altitudeFeet: bd.getFloat32(18, Endian.little),
-    headingDegrees: bd.getFloat32(22, Endian.little),
-    verticalSpeedFpm: bd.getFloat32(26, Endian.little),
   );
 }
 

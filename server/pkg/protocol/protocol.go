@@ -13,7 +13,7 @@ import (
 // Version is the current protocol version. A HELLO carrying a different
 // version should be rejected with HelloVersionMismatch rather than silently
 // accepted.
-const Version uint8 = 5
+const Version uint8 = 6
 
 // PacketType identifies the payload that follows the 4-byte Header.
 type PacketType uint8
@@ -262,13 +262,11 @@ const (
 	GearTransit GearPosition = 2
 )
 
-const TelemetryPacketSize = HeaderSize + 26
+const TelemetryPacketSize = HeaderSize + 10
 
 // Telemetry carries live aircraft state read from SimConnect, pushed
-// server → phone. v1 shipped a fixed small struct rather than a generic
-// key/value simvar schema; v2 appends 4 status-tile fields (airspeed,
-// altitude, heading, vertical speed) to that same fixed struct rather than
-// switching schemes.
+// server → phone. A fixed small struct rather than a generic key/value
+// simvar schema.
 //
 // Every field here exists to close a "double lane" gap for something the
 // phone can also command or display: an in-sim change (mouse, keyboard,
@@ -289,14 +287,6 @@ type Telemetry struct {
 	// Pause system event — not a guess based on the phone's last PAUSE tap,
 	// which can't see an external pause/unpause (e.g. the Esc key on the PC).
 	Paused bool
-	// AirspeedKnots is AIRSPEED INDICATED, knots.
-	AirspeedKnots float32
-	// AltitudeFeet is INDICATED ALTITUDE, feet.
-	AltitudeFeet float32
-	// HeadingDegrees is PLANE HEADING DEGREES MAGNETIC, degrees.
-	HeadingDegrees float32
-	// VerticalSpeedFpm is VERTICAL SPEED, feet/minute.
-	VerticalSpeedFpm float32
 }
 
 func EncodeTelemetry(seq uint16, t Telemetry) []byte {
@@ -309,10 +299,6 @@ func EncodeTelemetry(seq uint16, t Telemetry) []byte {
 	binary.LittleEndian.PutUint32(buf[8:12], math.Float32bits(t.ThrottlePercent))
 	buf[12] = boolByte(t.Paused)
 	buf[13] = 0 // reserved
-	binary.LittleEndian.PutUint32(buf[14:18], math.Float32bits(t.AirspeedKnots))
-	binary.LittleEndian.PutUint32(buf[18:22], math.Float32bits(t.AltitudeFeet))
-	binary.LittleEndian.PutUint32(buf[22:26], math.Float32bits(t.HeadingDegrees))
-	binary.LittleEndian.PutUint32(buf[26:30], math.Float32bits(t.VerticalSpeedFpm))
 	return buf
 }
 
@@ -327,10 +313,6 @@ func DecodeTelemetry(b []byte) (Telemetry, error) {
 		ParkingBrakeSet:    b[7] != 0,
 		ThrottlePercent:    math.Float32frombits(binary.LittleEndian.Uint32(b[8:12])),
 		Paused:             b[12] != 0,
-		AirspeedKnots:      math.Float32frombits(binary.LittleEndian.Uint32(b[14:18])),
-		AltitudeFeet:       math.Float32frombits(binary.LittleEndian.Uint32(b[18:22])),
-		HeadingDegrees:     math.Float32frombits(binary.LittleEndian.Uint32(b[22:26])),
-		VerticalSpeedFpm:   math.Float32frombits(binary.LittleEndian.Uint32(b[26:30])),
 	}, nil
 }
 
