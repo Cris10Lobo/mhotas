@@ -17,7 +17,7 @@ Every packet starts with a 4-byte header:
 | Offset | Size | Field           | Notes                                              |
 |--------|------|-----------------|-----------------------------------------------------|
 | 0      | 1    | `type`          | See packet type table below                        |
-| 1      | 1    | `version`       | Protocol version, currently `6`                     |
+| 1      | 1    | `version`       | Protocol version, currently `7`                     |
 | 2      | 2    | `seq`           | uint16, per-packet-type sequence number, wraps at 65535 |
 
 ## Packet types
@@ -84,7 +84,7 @@ No payload. Either side sends this roughly once per second while a session is ac
 liveness/UI state ("connected" vs "connection lost") and to drive the server's failsafe timer — it is
 not required for `AXIS`/`BUTTON` processing to function.
 
-### `TELEMETRY` (0x06) — 14 bytes total
+### `TELEMETRY` (0x06) — 18 bytes total
 
 | Offset | Size | Field                 | Notes                                                    |
 |--------|------|------------------------|-------------------------------------------------------------|
@@ -94,12 +94,14 @@ not required for `AXIS`/`BUTTON` processing to function.
 | 7      | 1    | `parkingBrakeSet`      | uint8: 0/1, the sim's *actual* current parking brake state, independent of the phone's own button-tap history |
 | 8      | 4    | `throttlePercent`      | float32, -1..1, the sim's *actual* current throttle lever position (negative = reverse), independent of whatever the phone last commanded |
 | 12     | 1    | `paused`               | uint8: 0/1, the sim's *actual* current pause state, from SimConnect's own Pause system event, not a guess based on the phone's last PAUSE tap |
-| 13     | 1    | reserved               | must be 0, reserved for extension                            |
+| 13     | 1    | `flags`                | bitmask: bit0 = `stallWarning` (SimConnect `STALL WARNING`), bit1 = `onGround` (`SIM ON GROUND`), bits 2-7 unused. Was a plain "reserved, must be 0" byte through v6. |
+| 14     | 4    | `groundSpeedKnots`     | float32, `GROUND VELOCITY` in knots — drives the taxi/ground-roll rumble haptic's pulse rate; meaningless while `onGround` is false |
 
 These fields exist so the app can mirror the sim's real state rather than silently fighting a manual
 in-sim adjustment or guessing state locally — see "Bidirectional sync" below. A fixed struct rather than
 a generic key/value simvar schema. (v2-v5 carried 4 extra fields — airspeed/altitude/heading/vertical
-speed — for on-screen status tiles; removed in v6 along with the status tiles themselves.)
+speed — for on-screen status tiles; removed in v6 along with the status tiles themselves. v7 adds
+`flags`/`groundSpeedKnots` for haptic feedback — stall-warning stick-shaker and taxi rumble.)
 
 ### `CONFIG` (0x07) — 76 bytes total
 
