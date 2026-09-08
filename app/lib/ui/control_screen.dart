@@ -75,7 +75,9 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
   @override
   void initState() {
     super.initState();
-    WakelockPlus.enable(); // screen must not sleep mid-flight
+    // Ignore failure (e.g. no wakelock platform binding, as in a headless
+    // test run) — the screen must still work, just without the guarantee.
+    WakelockPlus.enable().catchError((_) {});
     _attitudeStream.start();
     _attitudeSub = _attitudeStream.stream.listen((a) {
       if (mounted) setState(() => _attitude = a);
@@ -156,7 +158,7 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
     _sendTimer?.cancel();
     _attitudeSub?.cancel();
     _attitudeStream.dispose();
-    WakelockPlus.disable();
+    WakelockPlus.disable().catchError((_) {});
     super.dispose();
   }
 
@@ -547,14 +549,17 @@ class _MovableState extends ConsumerState<_Movable> {
             // needs real taps to reach widget.child directly, not
             // _DraggableControl's drag gesture/IgnorePointer wrapper,
             // which exists only to make dragging (not tapping) work.
-            child: editMode
-                ? _DraggableControl(
-                    onPanUpdate: (delta) => ref
-                        .read(layoutOffsetsProvider.notifier)
-                        .addDelta(widget.id, delta),
-                    child: widget.child,
-                  )
-                : widget.child,
+            child: KeyedSubtree(
+              key: Key(widget.id),
+              child: editMode
+                  ? _DraggableControl(
+                      onPanUpdate: (delta) => ref
+                          .read(layoutOffsetsProvider.notifier)
+                          .addDelta(widget.id, delta),
+                      child: widget.child,
+                    )
+                  : widget.child,
+            ),
           ),
         ),
         // ponytail: renders widget.child a second time here (invisible,
@@ -568,7 +573,7 @@ class _MovableState extends ConsumerState<_Movable> {
         // instead of rendering it for real.
         child: needsOverlay
             ? Opacity(opacity: 0, child: IgnorePointer(child: widget.child))
-            : widget.child,
+            : KeyedSubtree(key: Key(widget.id), child: widget.child),
       ),
     );
   }
