@@ -28,7 +28,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 // either), so rotation_sensor's channels have no test binding. Mock them to
 // succeed as a no-op rather than throw, matching what actually happens on
 // a real desktop/CI machine with no rotation sensor.
-const _rotationSensorChannels = ['rotation_sensor/method', 'rotation_sensor/orientation'];
+const _rotationSensorChannels = [
+  'rotation_sensor/method',
+  'rotation_sensor/orientation'
+];
 
 void main() {
   setUp(() {
@@ -49,14 +52,15 @@ void main() {
   group('telemetry -> UI', () {
     testWidgets('flap lever shows the synced detent/max', (tester) async {
       await _pumpScreen(tester, overrides: [
-        telemetryProvider.overrideWith((ref) => Stream.value(const proto.Telemetry(
-              flapHandleIndex: 2,
-              flapHandleIndexMax: 4,
-              gearPosition: proto.GearPosition.up,
-              parkingBrakeSet: false,
-              throttlePercent: 0,
-              paused: false,
-            ))),
+        telemetryProvider
+            .overrideWith((ref) => Stream.value(const proto.Telemetry(
+                  flapHandleIndex: 2,
+                  flapHandleIndexMax: 4,
+                  gearPosition: proto.GearPosition.up,
+                  parkingBrakeSet: false,
+                  throttlePercent: 0,
+                  paused: false,
+                ))),
       ]);
       await tester.pump();
       expect(find.text('2/4'), findsOneWidget);
@@ -65,14 +69,15 @@ void main() {
     testWidgets('gear toggle bolds DOWN when telemetry says down',
         (tester) async {
       await _pumpScreen(tester, overrides: [
-        telemetryProvider.overrideWith((ref) => Stream.value(const proto.Telemetry(
-              flapHandleIndex: 0,
-              flapHandleIndexMax: 0,
-              gearPosition: proto.GearPosition.down,
-              parkingBrakeSet: false,
-              throttlePercent: 0,
-              paused: false,
-            ))),
+        telemetryProvider
+            .overrideWith((ref) => Stream.value(const proto.Telemetry(
+                  flapHandleIndex: 0,
+                  flapHandleIndexMax: 0,
+                  gearPosition: proto.GearPosition.down,
+                  parkingBrakeSet: false,
+                  throttlePercent: 0,
+                  paused: false,
+                ))),
       ]);
       await tester.pump();
       final down = tester.widget<Text>(find.text('DOWN'));
@@ -83,22 +88,23 @@ void main() {
 
     testWidgets('pause icon reflects telemetry.paused', (tester) async {
       await _pumpScreen(tester, overrides: [
-        telemetryProvider.overrideWith((ref) => Stream.value(const proto.Telemetry(
-              flapHandleIndex: 0,
-              flapHandleIndexMax: 0,
-              gearPosition: proto.GearPosition.up,
-              parkingBrakeSet: false,
-              throttlePercent: 0,
-              paused: true,
-            ))),
+        telemetryProvider
+            .overrideWith((ref) => Stream.value(const proto.Telemetry(
+                  flapHandleIndex: 0,
+                  flapHandleIndexMax: 0,
+                  gearPosition: proto.GearPosition.up,
+                  parkingBrakeSet: false,
+                  throttlePercent: 0,
+                  paused: true,
+                ))),
       ]);
       await tester.pump();
       // find.byIcon alone is ambiguous: the tilt indicator has its own,
       // unrelated pause/play icon (gyroPausedProvider) using the same
       // Icons.pause/play_arrow pair — go through the AppBar button
       // specifically, by its stable tooltip.
-      final icon = tester.widget<Icon>(
-          find.descendant(of: find.byTooltip('Pause'), matching: find.byType(Icon)));
+      final icon = tester.widget<Icon>(find.descendant(
+          of: find.byTooltip('Pause'), matching: find.byType(Icon)));
       expect(icon.icon, Icons.play_arrow);
     });
   });
@@ -145,14 +151,15 @@ void main() {
         final server = await _FakeServer.start();
         addTearDown(server.close);
         final container = ProviderContainer(overrides: [
-          telemetryProvider.overrideWith((ref) => Stream.value(const proto.Telemetry(
-                flapHandleIndex: 0,
-                flapHandleIndexMax: 4,
-                gearPosition: proto.GearPosition.up,
-                parkingBrakeSet: false,
-                throttlePercent: 0,
-                paused: false,
-              ))),
+          telemetryProvider
+              .overrideWith((ref) => Stream.value(const proto.Telemetry(
+                    flapHandleIndex: 0,
+                    flapHandleIndexMax: 4,
+                    gearPosition: proto.GearPosition.up,
+                    parkingBrakeSet: false,
+                    throttlePercent: 0,
+                    paused: false,
+                  ))),
         ]);
         addTearDown(container.dispose);
 
@@ -160,12 +167,14 @@ void main() {
         await tester.pump(); // let the telemetry override reach the lever
         await _connect(tester, container, server);
 
-        await tester.drag(find.byKey(const Key('flapLever')), const Offset(0, 50));
+        await tester.drag(
+            find.byKey(const Key('flapLever')), const Offset(0, 50));
         final incr = await server.nextButton();
         expect(incr.buttonId, ButtonIds.flapIncr);
         expect((await server.nextButton()).pressed, isFalse); // release
 
-        await tester.drag(find.byKey(const Key('flapLever')), const Offset(0, -50));
+        await tester.drag(
+            find.byKey(const Key('flapLever')), const Offset(0, -50));
         final decr = await server.nextButton();
         expect(decr.buttonId, ButtonIds.flapDecr);
         expect((await server.nextButton()).pressed, isFalse); // release
@@ -241,15 +250,13 @@ void main() {
         final incr = find.descendant(
             of: find.byKey(const Key('throttle')), matching: find.text('+'));
         await tester.tap(incr);
-        expect(
-            (await server.nextButton()).buttonId, ButtonIds.throttleIncr);
+        expect((await server.nextButton()).buttonId, ButtonIds.throttleIncr);
         expect((await server.nextButton()).pressed, isFalse);
 
         final decr = find.descendant(
             of: find.byKey(const Key('throttle')), matching: find.text('-'));
         await tester.tap(decr);
-        expect(
-            (await server.nextButton()).buttonId, ButtonIds.throttleDecr);
+        expect((await server.nextButton()).buttonId, ButtonIds.throttleDecr);
         expect((await server.nextButton()).pressed, isFalse);
 
         final reverseArm = find.descendant(
@@ -274,7 +281,8 @@ void main() {
         await _pumpScreen(tester, container: container);
         await _connect(tester, container, server);
 
-        await tester.drag(find.byKey(const Key('throttle')), const Offset(0, -100));
+        await tester.drag(
+            find.byKey(const Key('throttle')), const Offset(0, -100));
         final axis1 =
             await server.nextAxis(where: (a) => a.throttle.abs() > 0.05);
         expect(axis1.throttle, greaterThan(0));
@@ -291,7 +299,8 @@ void main() {
       });
     });
 
-    testWidgets('manual joystick sends pitch/roll AXIS packets', (tester) async {
+    testWidgets('manual joystick sends pitch/roll AXIS packets',
+        (tester) async {
       await tester.runAsync(() async {
         final server = await _FakeServer.start();
         addTearDown(server.close);
@@ -303,7 +312,8 @@ void main() {
         await tester.pump();
         await _connect(tester, container, server);
 
-        await tester.drag(find.byKey(const Key('attitude')), const Offset(60, 40));
+        await tester.drag(
+            find.byKey(const Key('attitude')), const Offset(60, 40));
         final axis = await server.nextAxis(
             where: (a) => a.roll.abs() > 0.1 && a.pitch.abs() > 0.1);
         expect(axis.roll, greaterThan(0));
@@ -337,8 +347,8 @@ Future<void> _pumpScreen(
 /// Connects the real UdpClient to [server] and waits for HELLO_ACK to land
 /// (a real round-trip, not an arbitrary delay), then flushes the resulting
 /// rebuild.
-Future<void> _connect(
-  WidgetTester tester, ProviderContainer container, _FakeServer server) async {
+Future<void> _connect(WidgetTester tester, ProviderContainer container,
+    _FakeServer server) async {
   container.read(udpClientProvider).connect('127.0.0.1', server.port);
   final deadline = DateTime.now().add(const Duration(seconds: 2));
   while (container.read(connectionStatusProvider).valueOrNull !=
@@ -368,7 +378,8 @@ class _FakeServer {
   (int, bool)? _lastButton;
 
   static Future<_FakeServer> start() async {
-    final socket = await RawDatagramSocket.bind(InternetAddress.loopbackIPv4, 0);
+    final socket =
+        await RawDatagramSocket.bind(InternetAddress.loopbackIPv4, 0);
     final server = _FakeServer._(socket);
     socket.listen((event) {
       if (event != RawSocketEvent.read) return;
