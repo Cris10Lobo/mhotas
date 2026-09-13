@@ -17,7 +17,7 @@ Every packet starts with a 4-byte header:
 | Offset | Size | Field           | Notes                                              |
 |--------|------|-----------------|-----------------------------------------------------|
 | 0      | 1    | `type`          | See packet type table below                        |
-| 1      | 1    | `version`       | Protocol version, currently `5`                     |
+| 1      | 1    | `version`       | Protocol version, currently `6`                     |
 | 2      | 2    | `seq`           | uint16, per-packet-type sequence number, wraps at 65535 |
 
 ## Packet types
@@ -84,7 +84,7 @@ No payload. Either side sends this roughly once per second while a session is ac
 liveness/UI state ("connected" vs "connection lost") and to drive the server's failsafe timer — it is
 not required for `AXIS`/`BUTTON` processing to function.
 
-### `TELEMETRY` (0x06) — 30 bytes total
+### `TELEMETRY` (0x06) — 14 bytes total
 
 | Offset | Size | Field                 | Notes                                                    |
 |--------|------|------------------------|-------------------------------------------------------------|
@@ -95,17 +95,11 @@ not required for `AXIS`/`BUTTON` processing to function.
 | 8      | 4    | `throttlePercent`      | float32, -1..1, the sim's *actual* current throttle lever position (negative = reverse), independent of whatever the phone last commanded |
 | 12     | 1    | `paused`               | uint8: 0/1, the sim's *actual* current pause state, from SimConnect's own Pause system event, not a guess based on the phone's last PAUSE tap |
 | 13     | 1    | reserved               | must be 0, reserved for extension                            |
-| 14     | 4    | `airspeedKnots`        | float32, `AIRSPEED INDICATED` simvar, knots                 |
-| 18     | 4    | `altitudeFeet`         | float32, `INDICATED ALTITUDE` simvar, feet                  |
-| 22     | 4    | `headingDegrees`       | float32, `PLANE HEADING DEGREES MAGNETIC` simvar, degrees   |
-| 26     | 4    | `verticalSpeedFpm`     | float32, `VERTICAL SPEED` simvar, feet/minute                |
 
 These fields exist so the app can mirror the sim's real state rather than silently fighting a manual
-in-sim adjustment or guessing state locally — see "Bidirectional sync" below. v1 shipped this fixed
-struct rather than a generic key/value simvar schema; v2 (offsets 14-29) extends the same struct with 4
-read-only status-tile values (airspeed/altitude/heading/vertical speed) rather than switching schemes. A
-generic subscription scheme (arbitrary simvars from the `mrlm-net/simconnect` library's tracked set) is
-a later protocol extension, not v2.
+in-sim adjustment or guessing state locally — see "Bidirectional sync" below. A fixed struct rather than
+a generic key/value simvar schema. (v2-v5 carried 4 extra fields — airspeed/altitude/heading/vertical
+speed — for on-screen status tiles; removed in v6 along with the status tiles themselves.)
 
 ### `CONFIG` (0x07) — 76 bytes total
 

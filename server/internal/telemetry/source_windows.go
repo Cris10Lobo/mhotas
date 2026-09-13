@@ -52,10 +52,6 @@ func (s *Source) Run(ctx context.Context, sink Sink) error {
 				ThrottleLeverPercent:   as.ThrottleLeverPercent,
 				ParkingBrakeSet:        as.ParkingBrakeSet,
 				Paused:                 s.client.Paused(),
-				AirspeedKnots:          as.AirspeedKnots,
-				AltitudeFeet:           as.AltitudeFeet,
-				HeadingDegrees:         as.HeadingDegrees,
-				VerticalSpeedFpm:       as.VerticalSpeedFpm,
 			})
 			if have && t == last {
 				continue

@@ -5,15 +5,13 @@ import '../network/protocol.dart' as proto;
 import '../state/calibration.dart';
 import '../state/connection.dart';
 import '../state/settings.dart';
-import '../state/status_tiles.dart';
 
-/// Two things are configurable purely on-device: which simvar each
-/// control-screen status tile shows, and the manual joystick toggle. Axis
-/// calibration (dead-zone/expo/invert/smoothing) lives on the server but is
-/// editable from here over CONFIG/CONFIG_SET (see docs/protocol.md) —
-/// requesting a fresh read on open rather than trusting whatever the
-/// connect-time push happened to deliver, since this screen may not have
-/// been mounted yet when that one-shot CONFIG arrived.
+/// The manual joystick / nudge-throttle toggles are configurable purely
+/// on-device. Axis calibration (dead-zone/expo/invert/smoothing) lives on
+/// the server but is editable from here over CONFIG/CONFIG_SET — requesting
+/// a fresh read on open rather than trusting whatever the connect-time push
+/// happened to deliver, since this screen may not have been mounted yet when
+/// that one-shot CONFIG arrived.
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
 
@@ -22,27 +20,10 @@ class SettingsScreen extends ConsumerStatefulWidget {
 }
 
 class _SettingsScreenState extends ConsumerState<SettingsScreen> {
-  List<StatusTileKind> _kinds = defaultStatusTileKinds;
-
   @override
   void initState() {
     super.initState();
-    _loadKinds();
     ref.read(udpClientProvider).requestConfig();
-  }
-
-  Future<void> _loadKinds() async {
-    final kinds = await loadStatusTileKinds();
-    if (!mounted) return;
-    setState(() => _kinds = kinds);
-  }
-
-  Future<void> _setKind(int tileIndex, StatusTileKind kind) async {
-    setState(() => _kinds = [
-          for (var i = 0; i < _kinds.length; i++)
-            i == tileIndex ? kind : _kinds[i],
-        ]);
-    await saveStatusTileKind(tileIndex, kind);
   }
 
   @override
@@ -55,37 +36,6 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       body: ListView(
         padding: const EdgeInsets.all(24),
         children: [
-          const Text(
-            'Status tiles',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 8),
-          const Text(
-            'Choose what each of the 4 status tiles on the flying screen '
-            'shows. Duplicates are fine.',
-          ),
-          const SizedBox(height: 16),
-          for (var i = 0; i < statusTileCount; i++)
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 8),
-              child: Row(
-                children: [
-                  Text('Tile ${i + 1}'),
-                  const SizedBox(width: 16),
-                  DropdownButton<StatusTileKind>(
-                    value: _kinds[i],
-                    items: [
-                      for (final kind in StatusTileKind.values)
-                        DropdownMenuItem(value: kind, child: Text(kind.label)),
-                    ],
-                    onChanged: (kind) {
-                      if (kind != null) _setKind(i, kind);
-                    },
-                  ),
-                ],
-              ),
-            ),
-          const SizedBox(height: 24),
           SwitchListTile(
             title: const Text('Manual joystick'),
             subtitle: const Text(

@@ -79,8 +79,17 @@ so don't assume the Dart code compiles without checking (CI runs `flutter analyz
 cd app
 flutter pub get
 flutter analyze
+flutter test  # headless — see test/control_screen_test.dart below
 flutter run   # real device required — motion sensors aren't meaningful on emulators/simulators
 ```
+
+`test/control_screen_test.dart` is the fast way to check "did I wire this control up right" without a
+physical phone: `UdpClient` talks UDP via plain `dart:io`, no platform channel, so `flutter test` can pump
+the real `ControlScreen`, tap/drag its real controls, and have the real `UdpClient` send real UDP packets
+that the test itself receives and decodes with `protocol.dart` — no real `mhotas-server` process involved
+(the Go side's wire→backend mapping already has its own coverage in
+`server/internal/transport/server_test.go`). Gyroscope/tilt is the one thing it can't cover — motion
+sensors aren't meaningful off real hardware either, so that stays a manual `flutter run` check.
 
 ## Architecture
 
