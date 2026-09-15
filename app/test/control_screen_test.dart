@@ -183,7 +183,7 @@ void main() {
       controller.add(_telemetry(stallWarning: true));
       await tester.pump();
       expect(calls.vibrations, ['vibrate']);
-      expect(calls.lastVibratePattern, [0, 80, 40]);
+      expect(calls.lastVibratePattern, [0, 130, 90]);
       expect(calls.lastVibrateRepeat, 0);
       calls.vibrations.clear();
 
@@ -195,6 +195,42 @@ void main() {
       controller.add(_telemetry(stallWarning: false));
       await tester.pump();
       expect(calls.vibrations, ['cancel']);
+    });
+
+    testWidgets('sim pause stops stall shaker and taxi rumble', (tester) async {
+      // Regression test: paused telemetry keeps reporting the last
+      // stallWarning/onGround/groundSpeedKnots values (the sim freezes
+      // rather than clearing them), so both loops used to keep buzzing
+      // straight through a pause.
+      final controller = StreamController<proto.Telemetry>();
+      addTearDown(controller.close);
+      final calls = _recordHaptics();
+      addTearDown(calls.dispose);
+
+      await _pumpScreen(tester, overrides: [
+        telemetryProvider.overrideWith((ref) => controller.stream),
+      ]);
+      controller.add(_telemetry(
+          stallWarning: true, onGround: true, groundSpeedKnots: 20));
+      await tester.pump();
+      expect(calls.vibrations, ['vibrate', 'vibrate']); // shaker + rumble
+      calls.haptics.clear();
+      calls.vibrations.clear();
+
+      controller.add(_telemetry(
+          paused: true,
+          stallWarning: true,
+          onGround: true,
+          groundSpeedKnots: 20));
+      await tester.pump();
+      expect(calls.vibrations, ['cancel', 'cancel']);
+      calls.vibrations.clear();
+
+      // Unpausing with the same sim state still active must restart both.
+      controller.add(_telemetry(
+          stallWarning: true, onGround: true, groundSpeedKnots: 20));
+      await tester.pump();
+      expect(calls.vibrations, ['vibrate', 'vibrate']);
     });
 
     testWidgets(
