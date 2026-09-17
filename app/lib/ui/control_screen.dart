@@ -169,7 +169,7 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
     if (active == _stallShaking) return;
     _stallShaking = active;
     if (active) {
-      Vibration.vibrate(pattern: const [0, 80, 40], repeat: 0);
+      Vibration.vibrate(pattern: const [0, 130, 90], repeat: 0);
     } else {
       Vibration.cancel();
     }
@@ -184,9 +184,9 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
   // upgrade to interpolated pulse timing if the stepped rhythm feels wrong
   // in testing.
   static const _taxiRumbleBandPatterns = [
-    [0, 220, 260], // 3-15kt
-    [0, 140, 160], // 15-40kt
-    [0, 90, 90], // >40kt
+    [0, 320, 380], // 3-15kt
+    [0, 200, 230], // 15-40kt
+    [0, 130, 130], // >40kt
   ];
 
   int _taxiRumbleBandFor(double knots) {
@@ -266,9 +266,14 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
         }
       }
 
-      _updateStallShaker(nextT?.stallWarning ?? false);
+      // Sim-paused telemetry keeps reporting the last stallWarning/onGround
+      // values (the sim isn't updating them, not clearing them), so without
+      // this both loops would keep buzzing through a pause instead of
+      // stopping with everything else.
+      final paused = nextT?.paused ?? false;
+      _updateStallShaker(!paused && (nextT?.stallWarning ?? false));
       _updateTaxiRumble(
-        onGround: nextT?.onGround ?? false,
+        onGround: !paused && (nextT?.onGround ?? false),
         groundSpeedKnots: nextT?.groundSpeedKnots ?? 0,
       );
     });
