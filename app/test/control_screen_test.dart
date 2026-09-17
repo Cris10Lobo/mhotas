@@ -210,8 +210,8 @@ void main() {
       await _pumpScreen(tester, overrides: [
         telemetryProvider.overrideWith((ref) => controller.stream),
       ]);
-      controller.add(_telemetry(
-          stallWarning: true, onGround: true, groundSpeedKnots: 20));
+      controller.add(
+          _telemetry(stallWarning: true, onGround: true, groundSpeedKnots: 20));
       await tester.pump();
       expect(calls.vibrations, ['vibrate', 'vibrate']); // shaker + rumble
       calls.haptics.clear();
@@ -227,8 +227,8 @@ void main() {
       calls.vibrations.clear();
 
       // Unpausing with the same sim state still active must restart both.
-      controller.add(_telemetry(
-          stallWarning: true, onGround: true, groundSpeedKnots: 20));
+      controller.add(
+          _telemetry(stallWarning: true, onGround: true, groundSpeedKnots: 20));
       await tester.pump();
       expect(calls.vibrations, ['vibrate', 'vibrate']);
     });
