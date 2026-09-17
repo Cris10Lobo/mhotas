@@ -60,6 +60,9 @@ void main() {
                   parkingBrakeSet: false,
                   throttlePercent: 0,
                   paused: false,
+                  stallWarning: false,
+                  onGround: false,
+                  groundSpeedKnots: 0,
                 ))),
       ]);
       await tester.pump();
@@ -77,6 +80,9 @@ void main() {
                   parkingBrakeSet: false,
                   throttlePercent: 0,
                   paused: false,
+                  stallWarning: false,
+                  onGround: false,
+                  groundSpeedKnots: 0,
                 ))),
       ]);
       await tester.pump();
@@ -84,6 +90,150 @@ void main() {
       final up = tester.widget<Text>(find.text('UP'));
       expect(down.style?.fontWeight, FontWeight.bold);
       expect(up.style?.fontWeight, isNot(FontWeight.bold));
+    });
+
+    testWidgets('nothing fires on the very first telemetry packet',
+        (tester) async {
+      final controller = StreamController<proto.Telemetry>();
+      addTearDown(controller.close);
+      final calls = _recordHaptics();
+      addTearDown(calls.dispose);
+
+      await _pumpScreen(tester, overrides: [
+        telemetryProvider.overrideWith((ref) => controller.stream),
+      ]);
+      // A first-ever reading of GearPosition.down: with no prior telemetry
+      // to compare against, this must not read as a "just locked down"
+      // transition.
+      controller.add(_telemetry(gearPosition: proto.GearPosition.down));
+      await tester.pump();
+
+      expect(calls.haptics, isEmpty);
+      expect(calls.vibrations, isEmpty);
+    });
+
+    testWidgets(
+        'gear/flap/parking-brake/pause fire one-shot haptics only on confirmed transitions',
+        (tester) async {
+      final controller = StreamController<proto.Telemetry>();
+      addTearDown(controller.close);
+      final calls = _recordHaptics();
+      addTearDown(calls.dispose);
+
+      await _pumpScreen(tester, overrides: [
+        telemetryProvider.overrideWith((ref) => controller.stream),
+      ]);
+      controller.add(_telemetry(gearPosition: proto.GearPosition.transit));
+      await tester.pump();
+      calls.haptics.clear(); // first packet — nothing to assert on twice
+
+      controller.add(_telemetry(gearPosition: proto.GearPosition.down));
+      await tester.pump();
+      expect(calls.haptics, ['HapticFeedbackType.heavyImpact']);
+      calls.haptics.clear();
+
+      // Entering transit on the way back up: no haptic — only the locked
+      // end states buzz.
+      controller.add(_telemetry(gearPosition: proto.GearPosition.transit));
+      await tester.pump();
+      expect(calls.haptics, isEmpty);
+
+      controller.add(_telemetry(gearPosition: proto.GearPosition.up));
+      await tester.pump();
+      expect(calls.haptics, ['HapticFeedbackType.mediumImpact']);
+      calls.haptics.clear();
+
+      controller.add(
+          _telemetry(gearPosition: proto.GearPosition.up, flapHandleIndex: 1));
+      await tester.pump();
+      expect(calls.haptics, ['HapticFeedbackType.lightImpact']);
+      calls.haptics.clear();
+
+      controller.add(_telemetry(
+          gearPosition: proto.GearPosition.up,
+          flapHandleIndex: 1,
+          parkingBrakeSet: true));
+      await tester.pump();
+      expect(calls.haptics, ['HapticFeedbackType.selectionClick']);
+      calls.haptics.clear();
+
+      controller.add(_telemetry(
+          gearPosition: proto.GearPosition.up,
+          flapHandleIndex: 1,
+          parkingBrakeSet: true,
+          paused: true));
+      await tester.pump();
+      expect(calls.haptics, ['HapticFeedbackType.lightImpact']);
+    });
+
+    testWidgets('stall warning starts and stops a repeating vibration',
+        (tester) async {
+      final controller = StreamController<proto.Telemetry>();
+      addTearDown(controller.close);
+      final calls = _recordHaptics();
+      addTearDown(calls.dispose);
+
+      await _pumpScreen(tester, overrides: [
+        telemetryProvider.overrideWith((ref) => controller.stream),
+      ]);
+      controller.add(_telemetry());
+      await tester.pump();
+      expect(calls.vibrations, isEmpty);
+
+      controller.add(_telemetry(stallWarning: true));
+      await tester.pump();
+      expect(calls.vibrations, ['vibrate']);
+      expect(calls.lastVibratePattern, [0, 80, 40]);
+      expect(calls.lastVibrateRepeat, 0);
+      calls.vibrations.clear();
+
+      // Still active on the next packet — must not restart the loop.
+      controller.add(_telemetry(stallWarning: true));
+      await tester.pump();
+      expect(calls.vibrations, isEmpty);
+
+      controller.add(_telemetry(stallWarning: false));
+      await tester.pump();
+      expect(calls.vibrations, ['cancel']);
+    });
+
+    testWidgets(
+        'taxi rumble switches pattern by ground-speed band and stops airborne',
+        (tester) async {
+      final controller = StreamController<proto.Telemetry>();
+      addTearDown(controller.close);
+      final calls = _recordHaptics();
+      addTearDown(calls.dispose);
+
+      await _pumpScreen(tester, overrides: [
+        telemetryProvider.overrideWith((ref) => controller.stream),
+      ]);
+      controller.add(_telemetry());
+      await tester.pump();
+
+      // Parked/stationary — below the lowest band, no rumble.
+      controller.add(_telemetry(onGround: true, groundSpeedKnots: 1));
+      await tester.pump();
+      expect(calls.vibrations, isEmpty);
+
+      controller.add(_telemetry(onGround: true, groundSpeedKnots: 10));
+      await tester.pump();
+      expect(calls.vibrations, ['vibrate']);
+      calls.vibrations.clear();
+
+      // Same band — must not restart the pattern on every packet.
+      controller.add(_telemetry(onGround: true, groundSpeedKnots: 12));
+      await tester.pump();
+      expect(calls.vibrations, isEmpty);
+
+      controller.add(_telemetry(onGround: true, groundSpeedKnots: 20));
+      await tester.pump();
+      expect(calls.vibrations, ['vibrate']); // band changed, pattern restarts
+      calls.vibrations.clear();
+
+      controller.add(_telemetry(onGround: false, groundSpeedKnots: 20));
+      await tester.pump();
+      expect(calls.vibrations, ['cancel']); // airborne — rumble stops
     });
 
     testWidgets('pause icon reflects telemetry.paused', (tester) async {
@@ -96,6 +246,9 @@ void main() {
                   parkingBrakeSet: false,
                   throttlePercent: 0,
                   paused: true,
+                  stallWarning: false,
+                  onGround: false,
+                  groundSpeedKnots: 0,
                 ))),
       ]);
       await tester.pump();
@@ -159,6 +312,9 @@ void main() {
                     parkingBrakeSet: false,
                     throttlePercent: 0,
                     paused: false,
+                    stallWarning: false,
+                    onGround: false,
+                    groundSpeedKnots: 0,
                   ))),
         ]);
         addTearDown(container.dispose);
@@ -324,6 +480,77 @@ void main() {
     });
   });
 }
+
+/// Builds a Telemetry with sensible defaults, overriding only the fields a
+/// haptics test cares about — callers must repeat any field they want held
+/// steady across a sequence of packets, since each call is independent.
+proto.Telemetry _telemetry({
+  int flapHandleIndex = 0,
+  int flapHandleIndexMax = 4,
+  int gearPosition = proto.GearPosition.up,
+  bool parkingBrakeSet = false,
+  double throttlePercent = 0,
+  bool paused = false,
+  bool stallWarning = false,
+  bool onGround = false,
+  double groundSpeedKnots = 0,
+}) =>
+    proto.Telemetry(
+      flapHandleIndex: flapHandleIndex,
+      flapHandleIndexMax: flapHandleIndexMax,
+      gearPosition: gearPosition,
+      parkingBrakeSet: parkingBrakeSet,
+      throttlePercent: throttlePercent,
+      paused: paused,
+      stallWarning: stallWarning,
+      onGround: onGround,
+      groundSpeedKnots: groundSpeedKnots,
+    );
+
+/// Records every HapticFeedback (flutter/platform channel) and vibration
+/// package (its own 'vibration' channel) method call made while installed,
+/// so a test can assert on exactly what fired without a real device.
+class _HapticRecorder {
+  _HapticRecorder() {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(SystemChannels.platform, (call) async {
+      // Every HapticFeedback.* static method funnels through the single
+      // 'HapticFeedback.vibrate' platform method, with the actual variant
+      // passed as the string argument (e.g. 'HapticFeedbackType.heavyImpact')
+      // — see flutter/services/haptic_feedback.dart. Record the variant, not
+      // the (always-identical) method name.
+      if (call.method == 'HapticFeedback.vibrate') {
+        haptics.add(call.arguments as String? ?? 'HapticFeedbackType.vibrate');
+      }
+      return null;
+    });
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(const MethodChannel('vibration'),
+            (call) async {
+      vibrations.add(call.method);
+      if (call.method == 'vibrate') {
+        final args = call.arguments as Map;
+        lastVibratePattern = List<int>.from(args['pattern'] as List);
+        lastVibrateRepeat = args['repeat'] as int;
+      }
+      return null;
+    });
+  }
+
+  final haptics = <String>[];
+  final vibrations = <String>[];
+  List<int>? lastVibratePattern;
+  int? lastVibrateRepeat;
+
+  void dispose() {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(SystemChannels.platform, null);
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(const MethodChannel('vibration'), null);
+  }
+}
+
+_HapticRecorder _recordHaptics() => _HapticRecorder();
 
 /// Pumps ControlScreen inside a real-sized MaterialApp so the landscape
 /// control row fits without overflow. Callers either pass [container]

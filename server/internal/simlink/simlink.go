@@ -110,6 +110,9 @@ type aircraftStateData struct {
 	GearPositionPercent    int32
 	ThrottleLeverPercent   int32
 	ParkingBrakeSet        int32
+	StallWarning           int32
+	OnGround               int32
+	GroundVelocityKnots    float32
 }
 
 type AircraftState struct {
@@ -135,6 +138,15 @@ type AircraftState struct {
 	// the brake is actually set rather than assuming it never changes
 	// outside a button tap. Not yet confirmed against a live sim.
 	ParkingBrakeSet int32
+	// StallWarning is STALL WARNING, 0 or 1 — drives the phone's stick-
+	// shaker haptic. Not yet confirmed against a live sim.
+	StallWarning int32
+	// OnGround is SIM ON GROUND, 0 or 1 — gates the taxi/ground-roll rumble
+	// haptic so it never fires airborne. Not yet confirmed against a live sim.
+	OnGround int32
+	// GroundVelocityKnots is GROUND VELOCITY, knots — drives the taxi/
+	// ground-roll rumble's pulse rate. Not yet confirmed against a live sim.
+	GroundVelocityKnots float32
 }
 
 // LatestState returns the most recent aircraft-state reading, or false if
@@ -407,6 +419,9 @@ func setupTelemetryRead(client engine.Client) {
 	client.AddToDataDefinition(defAircraftState, "GEAR POSITION", "percent", types.SIMCONNECT_DATATYPE_INT32, 0, 2)
 	client.AddToDataDefinition(defAircraftState, "GENERAL ENG THROTTLE LEVER POSITION:1", "percent", types.SIMCONNECT_DATATYPE_INT32, 0, 3)
 	client.AddToDataDefinition(defAircraftState, "BRAKE PARKING POSITION", "bool", types.SIMCONNECT_DATATYPE_INT32, 0, 4)
+	client.AddToDataDefinition(defAircraftState, "STALL WARNING", "bool", types.SIMCONNECT_DATATYPE_INT32, 0, 5)
+	client.AddToDataDefinition(defAircraftState, "SIM ON GROUND", "bool", types.SIMCONNECT_DATATYPE_INT32, 0, 6)
+	client.AddToDataDefinition(defAircraftState, "GROUND VELOCITY", "knots", types.SIMCONNECT_DATATYPE_FLOAT32, 0, 7)
 
 	client.RequestDataOnSimObject(
 		reqAircraftState, defAircraftState,
@@ -441,6 +456,9 @@ func (c *Client) watchTelemetry(messages <-chan engine.Message) {
 			GearPositionPercent:    as.GearPositionPercent,
 			ThrottleLeverPercent:   as.ThrottleLeverPercent,
 			ParkingBrakeSet:        as.ParkingBrakeSet,
+			StallWarning:           as.StallWarning,
+			OnGround:               as.OnGround,
+			GroundVelocityKnots:    as.GroundVelocityKnots,
 		})
 	}
 }

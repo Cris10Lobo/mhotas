@@ -51,6 +51,9 @@ func (s *Source) Run(ctx context.Context, sink Sink) error {
 				GearPositionPercent:    as.GearPositionPercent,
 				ThrottleLeverPercent:   as.ThrottleLeverPercent,
 				ParkingBrakeSet:        as.ParkingBrakeSet,
+				StallWarning:           as.StallWarning,
+				OnGround:               as.OnGround,
+				GroundVelocityKnots:    as.GroundVelocityKnots,
 				Paused:                 s.client.Paused(),
 			})
 			if have && t == last {

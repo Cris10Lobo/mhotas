@@ -2,7 +2,9 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:vibration/vibration.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../network/protocol.dart' as proto;
@@ -71,6 +73,12 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
   // drop all 3 redundant BUTTON packets) with nothing to reconcile them —
   // add a spoilersArmed TELEMETRY field if that turns out to matter live.
   bool _speedbrakeArmed = false;
+
+  // Sustained haptics (stall shaker, taxi rumble): started/stopped only on
+  // an actual state change, not re-triggered every TELEMETRY packet — see
+  // _updateStallShaker/_updateTaxiRumble.
+  bool _stallShaking = false;
+  int _taxiRumbleBand = -1; // -1 = off
 
   @override
   void initState() {
@@ -153,12 +161,60 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
     _tapButton(ButtonIds.spoilerArm);
   }
 
+  // Stall warning stick-shaker: buzzes continuously while telemetry reports
+  // STALL WARNING active, stops the instant it clears. Built-in
+  // HapticFeedback can't loop, so this is the one thing on this screen that
+  // needs the vibration package.
+  void _updateStallShaker(bool active) {
+    if (active == _stallShaking) return;
+    _stallShaking = active;
+    if (active) {
+      Vibration.vibrate(pattern: const [0, 80, 40], repeat: 0);
+    } else {
+      Vibration.cancel();
+    }
+  }
+
+  // Taxi/ground-roll rumble: a rhythmic pulse while on the ground and
+  // rolling, approximating the physical bump of rolling over surface
+  // joints/lights — MSFS has no "currently over a runway light" signal to
+  // read, so this is a synthesized effect, not a direct sim readback.
+  //
+  // ponytail: fixed speed bands, not a continuous frequency mapping —
+  // upgrade to interpolated pulse timing if the stepped rhythm feels wrong
+  // in testing.
+  static const _taxiRumbleBandPatterns = [
+    [0, 220, 260], // 3-15kt
+    [0, 140, 160], // 15-40kt
+    [0, 90, 90], // >40kt
+  ];
+
+  int _taxiRumbleBandFor(double knots) {
+    if (knots < 3) return -1; // parked/stationary — no rumble
+    if (knots < 15) return 0;
+    if (knots < 40) return 1;
+    return 2;
+  }
+
+  void _updateTaxiRumble(
+      {required bool onGround, required double groundSpeedKnots}) {
+    final band = onGround ? _taxiRumbleBandFor(groundSpeedKnots) : -1;
+    if (band == _taxiRumbleBand) return;
+    _taxiRumbleBand = band;
+    if (band < 0) {
+      Vibration.cancel();
+    } else {
+      Vibration.vibrate(pattern: _taxiRumbleBandPatterns[band], repeat: 0);
+    }
+  }
+
   @override
   void dispose() {
     _sendTimer?.cancel();
     _attitudeSub?.cancel();
     _attitudeStream.dispose();
     WakelockPlus.disable().catchError((_) {});
+    Vibration.cancel();
     super.dispose();
   }
 
@@ -178,9 +234,43 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
     // settled into while set down is now "neutral", so resuming shouldn't
     // jolt the aircraft with a stale offset.
     ref.listen(telemetryProvider, (previous, next) {
-      final was = previous?.valueOrNull?.paused ?? false;
-      final isNow = next.valueOrNull?.paused ?? false;
+      final prevT = previous?.valueOrNull;
+      final nextT = next.valueOrNull;
+
+      final was = prevT?.paused ?? false;
+      final isNow = nextT?.paused ?? false;
       if (was && !isNow) _attitudeStream.recenter();
+
+      // One-shot haptic confirmations, telemetry-confirmed rather than
+      // tap-triggered — fires when the sim actually reaches the new state,
+      // not just when the button was pressed. Guarded on prevT != null so
+      // nothing fires on the first TELEMETRY packet after connect just
+      // because the sim's current state differs from "no prior reading".
+      if (prevT != null && nextT != null) {
+        if (prevT.paused != nextT.paused) HapticFeedback.lightImpact();
+
+        if (prevT.gearPosition != nextT.gearPosition) {
+          if (nextT.gearPosition == proto.GearPosition.down) {
+            HapticFeedback.heavyImpact();
+          } else if (nextT.gearPosition == proto.GearPosition.up) {
+            HapticFeedback.mediumImpact();
+          }
+        }
+
+        if (prevT.flapHandleIndex != nextT.flapHandleIndex) {
+          HapticFeedback.lightImpact();
+        }
+
+        if (prevT.parkingBrakeSet != nextT.parkingBrakeSet) {
+          HapticFeedback.selectionClick();
+        }
+      }
+
+      _updateStallShaker(nextT?.stallWarning ?? false);
+      _updateTaxiRumble(
+        onGround: nextT?.onGround ?? false,
+        groundSpeedKnots: nextT?.groundSpeedKnots ?? 0,
+      );
     });
     final isPaused = telemetry?.paused ?? false;
 

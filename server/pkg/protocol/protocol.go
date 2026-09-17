@@ -13,7 +13,7 @@ import (
 // Version is the current protocol version. A HELLO carrying a different
 // version should be rejected with HelloVersionMismatch rather than silently
 // accepted.
-const Version uint8 = 6
+const Version uint8 = 7
 
 // PacketType identifies the payload that follows the 4-byte Header.
 type PacketType uint8
@@ -262,7 +262,16 @@ const (
 	GearTransit GearPosition = 2
 )
 
-const TelemetryPacketSize = HeaderSize + 10
+const TelemetryPacketSize = HeaderSize + 14
+
+// telemetryFlagStallWarning and telemetryFlagOnGround are the bits packed
+// into Telemetry's wire byte 13 (formerly a plain "reserved, must be 0"
+// byte — see docs/protocol.md). Bits 2-7 stay unused headroom for further
+// booleans.
+const (
+	telemetryFlagStallWarning = 1 << 0
+	telemetryFlagOnGround     = 1 << 1
+)
 
 // Telemetry carries live aircraft state read from SimConnect, pushed
 // server → phone. A fixed small struct rather than a generic key/value
@@ -287,6 +296,15 @@ type Telemetry struct {
 	// Pause system event — not a guess based on the phone's last PAUSE tap,
 	// which can't see an external pause/unpause (e.g. the Esc key on the PC).
 	Paused bool
+	// StallWarning mirrors SimConnect's STALL WARNING simvar — drives the
+	// phone's stick-shaker haptic.
+	StallWarning bool
+	// OnGround mirrors SIM ON GROUND — gates the taxi/ground-roll rumble
+	// haptic (never buzzes airborne, e.g. from stale GroundSpeedKnots).
+	OnGround bool
+	// GroundSpeedKnots is GROUND VELOCITY, knots — drives the taxi/ground-
+	// roll rumble's pulse rate.
+	GroundSpeedKnots float32
 }
 
 func EncodeTelemetry(seq uint16, t Telemetry) []byte {
@@ -298,7 +316,15 @@ func EncodeTelemetry(seq uint16, t Telemetry) []byte {
 	buf[7] = boolByte(t.ParkingBrakeSet)
 	binary.LittleEndian.PutUint32(buf[8:12], math.Float32bits(t.ThrottlePercent))
 	buf[12] = boolByte(t.Paused)
-	buf[13] = 0 // reserved
+	var flags byte
+	if t.StallWarning {
+		flags |= telemetryFlagStallWarning
+	}
+	if t.OnGround {
+		flags |= telemetryFlagOnGround
+	}
+	buf[13] = flags
+	binary.LittleEndian.PutUint32(buf[14:18], math.Float32bits(t.GroundSpeedKnots))
 	return buf
 }
 
@@ -306,6 +332,7 @@ func DecodeTelemetry(b []byte) (Telemetry, error) {
 	if len(b) < TelemetryPacketSize {
 		return Telemetry{}, fmt.Errorf("protocol: TELEMETRY packet too short: %d bytes", len(b))
 	}
+	flags := b[13]
 	return Telemetry{
 		FlapHandleIndex:    int8(b[4]),
 		FlapHandleIndexMax: int8(b[5]),
@@ -313,6 +340,9 @@ func DecodeTelemetry(b []byte) (Telemetry, error) {
 		ParkingBrakeSet:    b[7] != 0,
 		ThrottlePercent:    math.Float32frombits(binary.LittleEndian.Uint32(b[8:12])),
 		Paused:             b[12] != 0,
+		StallWarning:       flags&telemetryFlagStallWarning != 0,
+		OnGround:           flags&telemetryFlagOnGround != 0,
+		GroundSpeedKnots:   math.Float32frombits(binary.LittleEndian.Uint32(b[14:18])),
 	}, nil
 }
 

@@ -16,6 +16,9 @@ type rawState struct {
 	GearPositionPercent    int32
 	ThrottleLeverPercent   int32
 	ParkingBrakeSet        int32
+	StallWarning           int32
+	OnGround               int32
+	GroundVelocityKnots    float32
 	Paused                 bool
 }
 
@@ -27,6 +30,9 @@ func toTelemetry(r rawState) protocol.Telemetry {
 		ParkingBrakeSet:    r.ParkingBrakeSet != 0,
 		ThrottlePercent:    percentToUnit(r.ThrottleLeverPercent),
 		Paused:             r.Paused,
+		StallWarning:       r.StallWarning != 0,
+		OnGround:           r.OnGround != 0,
+		GroundSpeedKnots:   r.GroundVelocityKnots,
 	}
 }
 

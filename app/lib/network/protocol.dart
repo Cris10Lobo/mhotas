@@ -9,7 +9,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 class ProtocolVersion {
-  static const int current = 6;
+  static const int current = 7;
 }
 
 class PacketType {
@@ -211,7 +211,14 @@ class GearPosition {
   static const int transit = 2;
 }
 
-const int telemetryPacketSize = headerSize + 10;
+const int telemetryPacketSize = headerSize + 14;
+
+/// Bits packed into Telemetry's wire byte 13 (was a plain "reserved, must
+/// be 0" byte through protocol v6 — see docs/protocol.md).
+class _TelemetryFlags {
+  static const int stallWarning = 1 << 0;
+  static const int onGround = 1 << 1;
+}
 
 /// Live aircraft state read from SimConnect, pushed server → phone. A fixed
 /// small struct rather than a generic key/value simvar schema.
@@ -240,6 +247,17 @@ class Telemetry {
   /// can't see an external pause/unpause.
   final bool paused;
 
+  /// SimConnect's STALL WARNING — drives the stick-shaker haptic.
+  final bool stallWarning;
+
+  /// SimConnect's SIM ON GROUND — gates the taxi/ground-roll rumble haptic
+  /// so it never fires airborne.
+  final bool onGround;
+
+  /// SimConnect's GROUND VELOCITY, knots — drives the taxi/ground-roll
+  /// rumble's pulse rate. Meaningless while [onGround] is false.
+  final double groundSpeedKnots;
+
   const Telemetry({
     required this.flapHandleIndex,
     required this.flapHandleIndexMax,
@@ -247,6 +265,9 @@ class Telemetry {
     required this.parkingBrakeSet,
     required this.throttlePercent,
     required this.paused,
+    required this.stallWarning,
+    required this.onGround,
+    required this.groundSpeedKnots,
   });
 }
 
@@ -255,6 +276,7 @@ Telemetry decodeTelemetry(Uint8List b) {
     throw FormatException('TELEMETRY packet too short: ${b.length} bytes');
   }
   final bd = ByteData.sublistView(b);
+  final flags = b[13];
   return Telemetry(
     flapHandleIndex: b[4].toSigned(8),
     flapHandleIndexMax: b[5].toSigned(8),
@@ -262,6 +284,9 @@ Telemetry decodeTelemetry(Uint8List b) {
     parkingBrakeSet: b[7] != 0,
     throttlePercent: bd.getFloat32(8, Endian.little),
     paused: b[12] != 0,
+    stallWarning: flags & _TelemetryFlags.stallWarning != 0,
+    onGround: flags & _TelemetryFlags.onGround != 0,
+    groundSpeedKnots: bd.getFloat32(14, Endian.little),
   );
 }
 

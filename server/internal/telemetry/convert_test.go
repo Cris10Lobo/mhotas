@@ -24,6 +24,17 @@ func TestGearPosition(t *testing.T) {
 	}
 }
 
+func TestToTelemetryHapticFields(t *testing.T) {
+	got := toTelemetry(rawState{
+		StallWarning:        1,
+		OnGround:            1,
+		GroundVelocityKnots: 42.5,
+	})
+	if !got.StallWarning || !got.OnGround || got.GroundSpeedKnots != 42.5 {
+		t.Errorf("toTelemetry haptic fields = %+v, want StallWarning/OnGround true, GroundSpeedKnots 42.5", got)
+	}
+}
+
 func TestPercentToUnit(t *testing.T) {
 	cases := []struct {
 		pct  int32
