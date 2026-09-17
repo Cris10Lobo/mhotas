@@ -26,6 +26,7 @@ app/pubspec.lock
 .vscode/
 .idea/
 .DS_Store
+.claude/
 
 docs/milestones.md
 docs/*.png
