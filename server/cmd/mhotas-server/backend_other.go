@@ -12,7 +12,7 @@ import (
 	"mhotas/internal/control/logbackend"
 )
 
-func newBackend(_ context.Context, name string, log *slog.Logger, _ map[string]config.ControlMapping) (control.Output, startTelemetryFunc, error) {
+func newBackend(_ context.Context, name, _ string, log *slog.Logger, _ config.Config) (control.Output, startTelemetryFunc, error) {
 	switch name {
 	case "log":
 		return logbackend.New(log), nil, nil

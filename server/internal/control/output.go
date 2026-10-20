@@ -83,6 +83,16 @@ var buttonNames = map[string]ButtonID{
 	"throttle_reverse_arm": ButtonThrottleReverseArm,
 }
 
+// String returns the button's config name, e.g. "gear".
+func (b ButtonID) String() string {
+	for name, id := range buttonNames {
+		if id == b {
+			return name
+		}
+	}
+	return fmt.Sprintf("button(%d)", uint8(b))
+}
+
 // AxisByName resolves a config "controls" key to an AxisID, false if it
 // isn't a recognized axis name.
 func AxisByName(name string) (AxisID, bool) {

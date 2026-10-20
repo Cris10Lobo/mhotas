@@ -35,6 +35,7 @@ func run() error {
 	var (
 		backendName = flag.String("backend", "log", "control output backend: log, simconnect")
 		configPath  = flag.String("config", "", "path to a JSON config file (optional; defaults are used if omitted)")
+		inputMode   = flag.String("input", "", "simconnect backend's input path: vjoy (default; falls back to simconnect if vJoy is unavailable) or simconnect")
 		uiMode      = flag.String("ui", "auto", "display mode: auto, tui, plain (auto = tui when stdout is a terminal)")
 	)
 	flag.Parse()
@@ -58,6 +59,14 @@ func run() error {
 		log = slog.New(slog.NewTextHandler(os.Stdout, nil))
 	}
 
+	input := *inputMode
+	if input == "" {
+		input = "vjoy"
+	}
+	if input != "vjoy" && input != "simconnect" {
+		return fmt.Errorf("unknown -input %q (want vjoy or simconnect)", input)
+	}
+
 	cfg, err := config.Load(*configPath)
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
@@ -66,7 +75,7 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	backend, startTelemetry, err := newBackend(ctx, *backendName, log, cfg.Controls)
+	backend, startTelemetry, err := newBackend(ctx, *backendName, input, log, cfg)
 	if err != nil {
 		return err
 	}

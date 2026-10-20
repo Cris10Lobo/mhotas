@@ -81,6 +81,12 @@ type Config struct {
 	// empty/absent Controls section reproduces that backend's built-in
 	// behavior exactly.
 	Controls map[string]ControlMapping `json:"controls,omitempty"`
+
+	// SimConnectControls lists controls ("rudder", "gear", ...) that stay on
+	// SimConnect in vJoy input mode — for a control whose vJoy binding
+	// doesn't work on some aircraft. Controls the vJoy device lacks are
+	// added automatically; this is only for the ones it has.
+	SimConnectControls []string `json:"simconnect_controls,omitempty"`
 }
 
 // Default returns the MVP default configuration: port 9750, 500ms failsafe
