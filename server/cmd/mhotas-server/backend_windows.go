@@ -12,39 +12,39 @@ import (
 	"mhotas/internal/control"
 	"mhotas/internal/control/logbackend"
 	"mhotas/internal/control/simconnect"
-	"mhotas/internal/control/vjoy"
+	"mhotas/internal/simlink"
 	"mhotas/internal/telemetry"
 )
 
-func newBackend(ctx context.Context, name string, log *slog.Logger, controls map[string]config.ControlMapping) (control.Output, error) {
+// newBackend also returns the telemetry starter for the SimConnect
+// connection it opened (nil for log), so telemetry is wired to the
+// connection itself rather than to whatever Output wraps it.
+func newBackend(ctx context.Context, name string, log *slog.Logger, controls map[string]config.ControlMapping) (control.Output, startTelemetryFunc, error) {
 	switch name {
 	case "log":
-		return logbackend.New(log), nil
+		return logbackend.New(log), nil, nil
 	case "simconnect":
-		return simconnect.New(ctx, log, controls)
-	case "vjoy":
-		return vjoy.New()
+		sc, err := simconnect.New(ctx, log, controls)
+		if err != nil {
+			return nil, nil, err
+		}
+		return sc, telemetryStarter(ctx, sc.SimlinkClient(), log), nil
 	default:
-		return nil, fmt.Errorf("unknown backend %q (want log, simconnect, or vjoy)", name)
+		return nil, nil, fmt.Errorf("unknown backend %q (want log or simconnect)", name)
 	}
 }
 
-// startTelemetry starts pushing live flap/gear state to sink in the
-// background, if backend supports it (only simconnect does — one
-// SimConnect connection serves both the write and read paths).
-func startTelemetry(ctx context.Context, backend control.Output, sink telemetry.Sink, log *slog.Logger) {
-	sc, ok := backend.(*simconnect.Backend)
-	if !ok {
-		return
-	}
-	src, err := telemetry.NewSource(sc.SimlinkClient())
-	if err != nil {
-		log.Error("telemetry source init failed", "err", err)
-		return
-	}
-	go func() {
-		if err := src.Run(ctx, sink); err != nil && !errors.Is(err, context.Canceled) {
-			log.Error("telemetry source stopped", "err", err)
+func telemetryStarter(ctx context.Context, client *simlink.Client, log *slog.Logger) startTelemetryFunc {
+	return func(sink telemetry.Sink) {
+		src, err := telemetry.NewSource(client)
+		if err != nil {
+			log.Error("telemetry source init failed", "err", err)
+			return
 		}
-	}()
+		go func() {
+			if err := src.Run(ctx, sink); err != nil && !errors.Is(err, context.Canceled) {
+				log.Error("telemetry source stopped", "err", err)
+			}
+		}()
+	}
 }

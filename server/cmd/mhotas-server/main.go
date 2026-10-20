@@ -1,9 +1,9 @@
 // Command mhotas-server is the PC-side server: it listens for phone
 // control packets over UDP and drives a control.Output backend
-// (log/simconnect/vjoy).
+// (log/simconnect).
 //
 // newBackend is implemented per-OS (backend_windows.go / backend_other.go)
-// since the simconnect/vjoy backends are Windows-only packages — this file
+// since the simconnect backend is Windows-only packages — this file
 // must stay buildable on every platform.
 package main
 
@@ -19,6 +19,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"mhotas/internal/config"
+	"mhotas/internal/telemetry"
 	"mhotas/internal/transport"
 	"mhotas/internal/tui"
 )
@@ -32,7 +33,7 @@ func main() {
 
 func run() error {
 	var (
-		backendName = flag.String("backend", "log", "control output backend: log, simconnect, vjoy")
+		backendName = flag.String("backend", "log", "control output backend: log, simconnect")
 		configPath  = flag.String("config", "", "path to a JSON config file (optional; defaults are used if omitted)")
 		uiMode      = flag.String("ui", "auto", "display mode: auto, tui, plain (auto = tui when stdout is a terminal)")
 	)
@@ -65,7 +66,7 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	backend, err := newBackend(ctx, *backendName, log, cfg.Controls)
+	backend, startTelemetry, err := newBackend(ctx, *backendName, log, cfg.Controls)
 	if err != nil {
 		return err
 	}
@@ -75,7 +76,9 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("starting transport: %w", err)
 	}
-	startTelemetry(ctx, backend, srv, log)
+	if startTelemetry != nil {
+		startTelemetry(srv)
+	}
 
 	if !useTUI {
 		log.Info("mhotas-server listening", "addr", srv.Addr(), "backend", backend.Name())
@@ -101,6 +104,10 @@ func run() error {
 	}
 	return runErr
 }
+
+// startTelemetryFunc starts streaming live sim state to sink in the
+// background — only backends with a SimConnect read path return one.
+type startTelemetryFunc func(sink telemetry.Sink)
 
 func isTerminal(f *os.File) bool {
 	fi, err := f.Stat()
