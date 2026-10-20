@@ -6,11 +6,16 @@ import (
 )
 
 const (
-	// syncHoldoff: no resync this soon after any write, so it can't fight a
-	// drag in progress or the sim still catching up to the last write.
-	syncHoldoff = 300 * time.Millisecond
-	// syncTolerance: how far (in -1..1 units) the sim must move from where
-	// it settled after our last write before that counts as an outside
+	// settleTime: the sim's lever counts as stopped once it hasn't moved
+	// for this long. Many aircraft slew the lever toward a new input at a
+	// limited rate rather than jumping, so a fixed holdoff after our write
+	// isn't enough — it caught the lever mid-travel and "corrected" it,
+	// fighting the phone.
+	settleTime = 500 * time.Millisecond
+	// settleEps: movement smaller than this between readings is noise.
+	settleEps = 0.005
+	// syncTolerance: how far (in -1..1 units) the stopped lever must be
+	// from where it stopped after our last write to count as an outside
 	// change.
 	syncTolerance = 0.02
 )
@@ -20,39 +25,50 @@ const (
 // autothrottle letting go) and vJoy still holds the old value, which MSFS
 // would re-apply if it ever re-reads the device.
 //
-// The sim's value after our own write becomes the baseline, and only a move
-// away from it triggers a resync. Writing the sim's value straight back on
-// every difference would loop: an MSFS binding with a non-linear
-// sensitivity curve settles slightly off what we wrote, so each write would
-// nudge the throttle again, forever. Not safe for concurrent use; Backend
-// serializes it with its own throttle lock.
+// After any write the phone owns the throttle: sim readings are ignored
+// until the lever stops moving, and where it stops becomes the baseline.
+// Only a later move away from that baseline, once it has itself stopped,
+// triggers a resync — so it never fights the lever slewing to our input,
+// a keyboard/mouse change still in progress, or an MSFS binding with a
+// non-linear sensitivity curve (which settles slightly off what we wrote).
+// Not safe for concurrent use; Backend serializes it with its throttle
+// lock.
 type throttleSync struct {
 	lastWrite time.Time
+	following bool // sim still responding to our last write
+	last      float64
+	lastMove  time.Time
 	baseline  float64
-	settled   bool
 }
 
 // wrote records any write to the throttle axis (phone or resync).
 func (s *throttleSync) wrote(now time.Time) {
-	s.lastWrite, s.settled = now, false
+	s.lastWrite, s.following, s.lastMove = now, true, now
 }
 
-// shouldSync reports whether to write sim to the device now, and records
-// that write if so. Never while autothrottle is active: to MSFS a vJoy
-// write is the pilot moving a hardware lever, which can disconnect it.
+// shouldSync is fed every sim reading; it reports whether to write sim to
+// the device now, and records that write if so. Never while autothrottle
+// is active: to MSFS a vJoy write is the pilot moving a hardware lever,
+// which can disconnect it.
 func (s *throttleSync) shouldSync(sim float64, autothrottle bool, now time.Time) bool {
+	if math.Abs(sim-s.last) > settleEps {
+		s.lastMove = now
+	}
+	s.last = sim
+	stopped := now.Sub(s.lastMove) >= settleTime
+
 	switch {
 	case autothrottle:
 		return false
 	case s.lastWrite.IsZero():
 		// Nothing written since startup, so the device's value is unknown:
 		// match the sim once.
-	case now.Sub(s.lastWrite) < syncHoldoff:
+	case s.following:
+		if stopped {
+			s.following, s.baseline = false, sim
+		}
 		return false
-	case !s.settled:
-		s.baseline, s.settled = sim, true
-		return false
-	case math.Abs(sim-s.baseline) < syncTolerance:
+	case math.Abs(sim-s.baseline) < syncTolerance, !stopped:
 		return false
 	}
 	s.wrote(now)

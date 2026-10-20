@@ -30,7 +30,10 @@ import 'package:shared_preferences/shared_preferences.dart';
 // a real desktop/CI machine with no rotation sensor.
 const _rotationSensorChannels = [
   'rotation_sensor/method',
-  'rotation_sensor/orientation'
+  'rotation_sensor/orientation',
+  // flutter_rotation_sensor's own dependency; only reached by tests that
+  // let real async work run (tester.runAsync).
+  'native_device_orientation_events',
 ];
 
 void main() {
@@ -84,6 +87,43 @@ void main() {
       await tester.pump();
       await tester.pump();
       expect(find.text('A/T'), findsNothing);
+    });
+
+    testWidgets(
+        'throttle lever ignores sim readings after a drag until the sim stops moving',
+        (tester) async {
+      final controller = StreamController<proto.Telemetry>();
+      addTearDown(controller.close);
+      await _pumpScreen(tester, overrides: [
+        telemetryProvider.overrideWith((ref) => controller.stream),
+      ]);
+      final knob = find.descendant(
+          of: find.byKey(const Key('throttle')),
+          matching: find.byWidgetPredicate(
+              (w) => w is Container && w.constraints?.maxWidth == 52));
+
+      await tester.drag(
+          find.byKey(const Key('throttle')), const Offset(0, -150));
+      await tester.pumpAndSettle();
+      final commandedY = tester.getCenter(knob).dy;
+
+      // The sim's lever is still slewing toward the command, well past any
+      // fixed grace period: mid-travel readings must not drag the knob back.
+      controller.add(_telemetry(throttlePercent: 0.1));
+      await tester.pumpAndSettle();
+      await tester.runAsync(
+          () => Future.delayed(const Duration(milliseconds: 400)));
+      controller.add(_telemetry(throttlePercent: 0.2));
+      await tester.pumpAndSettle();
+      expect(tester.getCenter(knob).dy, commandedY);
+
+      // Once the sim has stopped moving (here, short of the command), the
+      // knob follows it.
+      await tester
+          .runAsync(() => Future.delayed(const Duration(milliseconds: 600)));
+      controller.add(_telemetry(throttlePercent: 0.2));
+      await tester.pumpAndSettle();
+      expect(tester.getCenter(knob).dy, greaterThan(commandedY));
     });
 
     testWidgets('trim rocker shows the sim\'s elevator trim', (tester) async {

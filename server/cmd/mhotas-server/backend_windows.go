@@ -34,13 +34,14 @@ func newBackend(ctx context.Context, name, input string, log *slog.Logger, cfg c
 		if err != nil {
 			return nil, nil, err
 		}
+		start := telemetryStarter(ctx, sc.SimlinkClient(), log)
 		if input != "vjoy" {
-			return sc, telemetryStarter(ctx, sc.SimlinkClient(), nil, log), nil
+			return sc, start, nil
 		}
 		vj, unsupported, err := vjoy.New(log)
 		if err != nil {
 			log.Warn("vJoy unavailable, using SimConnect for all input", "err", err)
-			return sc, telemetryStarter(ctx, sc.SimlinkClient(), nil, log), nil
+			return sc, start, nil
 		}
 		if len(unsupported) > 0 {
 			log.Warn("vJoy device lacks these controls, using SimConnect for them", "controls", unsupported)
@@ -51,14 +52,18 @@ func newBackend(ctx context.Context, name, input string, log *slog.Logger, cfg c
 			sc.Close()
 			return nil, nil, fmt.Errorf("simconnect_controls: %w", err)
 		}
-		return r, telemetryStarter(ctx, sc.SimlinkClient(), r, log), nil
+		return r, start, nil
 	default:
 		return nil, nil, fmt.Errorf("unknown backend %q (want log or simconnect)", name)
 	}
 }
 
-func telemetryStarter(ctx context.Context, client *simlink.Client, syncer control.ThrottleSyncer, log *slog.Logger) startTelemetryFunc {
+// telemetryStarter feeds the sim's throttle back through sink when it's a
+// control.ThrottleSyncer (transport.Server is: it applies calibration first,
+// then hands it to the backend if that backend holds its last value).
+func telemetryStarter(ctx context.Context, client *simlink.Client, log *slog.Logger) startTelemetryFunc {
 	return func(sink telemetry.Sink) {
+		syncer, _ := sink.(control.ThrottleSyncer)
 		src, err := telemetry.NewSource(client, syncer)
 		if err != nil {
 			log.Error("telemetry source init failed", "err", err)

@@ -1121,19 +1121,18 @@ class _ThrottleLeverState extends State<_ThrottleLever>
   bool _dragging = false;
   late final AnimationController _anim;
 
-  // Timestamp of the last time this widget actively commanded a value
-  // (drag or the notify-driven idle spring-back). A commanded value takes a
-  // round trip (phone → server → sim → telemetry → phone) to show up in
-  // `synced`, so right after we command a new value — e.g. releasing in the
-  // reverse zone, which should snap straight to idle — the last known
-  // `synced` reading is still the *pre-release* value for a moment. Without this guard, the very next rebuild's
-  // didUpdateWidget would see that stale synced value, decide the lever
-  // needs to "catch up", and drag it right back into reverse — which is
-  // why releasing used to require overshooting into positive first to
-  // eventually win the race. Comfortably longer than that round trip
-  // (~50ms telemetry cap plus network and sim frame latency).
+  // After this widget commands a value (drag or the notify-driven idle
+  // spring-back), the phone owns the throttle: `synced` is ignored until
+  // the sim's lever has stopped moving. Many aircraft slew the lever toward
+  // a new input at a limited rate, so for a while `synced` is a mid-travel
+  // value — following it would drag the knob backwards after release (and
+  // e.g. pull a reverse-zone release back into reverse). A sim-only change
+  // with no recent local command is still followed live.
+  bool _awaitingSim = false;
   DateTime _lastLocalCommandAt = DateTime.fromMillisecondsSinceEpoch(0);
-  static const _localCommandGrace = Duration(milliseconds: 300);
+  double? _lastSynced;
+  DateTime _syncedMovedAt = DateTime.fromMillisecondsSinceEpoch(0);
+  static const _simSettleTime = Duration(milliseconds: 500);
 
   @override
   void initState() {
@@ -1148,6 +1147,7 @@ class _ThrottleLeverState extends State<_ThrottleLever>
 
   void _notifyChanged() {
     _lastLocalCommandAt = DateTime.now();
+    _awaitingSim = true;
     widget.onChanged(_value);
   }
 
@@ -1164,17 +1164,25 @@ class _ThrottleLeverState extends State<_ThrottleLever>
   void didUpdateWidget(covariant _ThrottleLever oldWidget) {
     super.didUpdateWidget(oldWidget);
     final synced = widget.synced;
-    final recentlyCommanded =
-        DateTime.now().difference(_lastLocalCommandAt) < _localCommandGrace;
+    final now = DateTime.now();
+    if (synced != null &&
+        (_lastSynced == null || (synced - _lastSynced!).abs() > 0.005)) {
+      _syncedMovedAt = now;
+    }
+    _lastSynced = synced;
+    if (_awaitingSim) {
+      final quietSince = _syncedMovedAt.isAfter(_lastLocalCommandAt)
+          ? _syncedMovedAt
+          : _lastLocalCommandAt;
+      if (now.difference(quietSince) < _simSettleTime) return;
+      _awaitingSim = false;
+    }
     // Ease toward a new synced reading instead of snapping instantly —
     // telemetry arrives at up to ~20Hz, so a short ease over roughly two
     // packets reads as smooth tracking instead of stepping. Compares against _animTo (the in-flight target),
     // not _value, so repeated rebuilds with the same synced reading don't
     // keep restarting the animation from scratch.
-    if (!_dragging &&
-        !recentlyCommanded &&
-        synced != null &&
-        synced != _animTo) {
+    if (!_dragging && synced != null && synced != _animTo) {
       _animateTo(synced,
           notify: false, duration: const Duration(milliseconds: 100));
     }
@@ -1349,7 +1357,7 @@ class _FlapLeverState extends State<_FlapLever> {
   double _dragFraction = 0; // 0 (up/retracted) .. 1 (down/full flaps)
   int? _pendingDetent;
 
-  // Same rationale as _ThrottleLever._localCommandGrace: right after a tap
+  // Same rationale as _ThrottleLever._awaitingSim: right after a tap
   // the last known `synced` reading is still the pre-tap value for a round
   // trip — without this guard the lever would visually snap back to the old
   // detent and then jump forward once telemetry catches up. Longer than the

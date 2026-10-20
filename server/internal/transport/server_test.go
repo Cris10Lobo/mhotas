@@ -377,3 +377,30 @@ func TestFailsafeNeutralizesAxisAfterTimeout(t *testing.T) {
 	}
 	t.Fatal("timed out waiting for failsafe to neutralize pitch while holding throttle")
 }
+
+// syncBackend records SyncThrottle calls on top of fakeBackend.
+type syncBackend struct {
+	fakeBackend
+	synced []float64
+}
+
+func (b *syncBackend) SyncThrottle(value float64, _ bool) { b.synced = append(b.synced, value) }
+
+func TestSyncThrottleAppliesCalibration(t *testing.T) {
+	cfg := config.Default()
+	cfg.ListenPort = 0
+	cfg.Throttle.Curve.Invert = true
+	backend := &syncBackend{}
+	srv, err := New(cfg, backend, slog.New(slog.DiscardHandler), "")
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { srv.conn.Close() })
+
+	// The sim's lever at 0.8 must reach the backend the way a phone value of
+	// 0.8 would: inverted. Raw 0.8 is the mirror image the sim jumps to.
+	srv.SyncThrottle(0.8, false)
+	if len(backend.synced) != 1 || backend.synced[0] != -0.8 {
+		t.Fatalf("backend got %v, want [-0.8]", backend.synced)
+	}
+}

@@ -106,17 +106,19 @@ func (b *Backend) SetAxis(id control.AxisID, value float64) error {
 
 // SyncThrottle implements control.ThrottleSyncer: moves the vJoy throttle
 // to the sim's actual lever position when the sim changed it some other
-// way — see throttleSync. MSFS receives the value it already has, so
-// nothing moves in the sim. The reverse button isn't touched.
-func (b *Backend) SyncThrottle(sim float64, autothrottle bool) {
+// way — see throttleSync. value arrives already calibrated (see
+// transport.Server.SyncThrottle), in the same units as SetAxis, so MSFS
+// receives the position it already has and nothing moves in the sim. The
+// reverse button isn't touched.
+func (b *Backend) SyncThrottle(value float64, autothrottle bool) {
 	a, ok := b.axes[control.AxisThrottle]
 	if !ok {
 		return
 	}
 	b.throttleMu.Lock()
 	defer b.throttleMu.Unlock()
-	if b.sync.shouldSync(sim, autothrottle, time.Now()) {
-		vjoylink.SetAxis(deviceID, a.usage, throttleToRaw(sim, b.signed.Load(), a.max))
+	if b.sync.shouldSync(value, autothrottle, time.Now()) {
+		vjoylink.SetAxis(deviceID, a.usage, throttleToRaw(value, b.signed.Load(), a.max))
 	}
 }
 

@@ -102,6 +102,19 @@ func New(cfg config.Config, backend control.Output, log *slog.Logger, configPath
 	}, nil
 }
 
+// SyncThrottle implements control.ThrottleSyncer for telemetry: the sim's
+// lever position goes through the throttle's calibration, exactly like a
+// phone value at that position would, before reaching the backend. The
+// phone lever shows the sim's position and sends from it, so this is what
+// the backend would hold had the phone put it there. Skipping the curve
+// writes the wrong value — with invert on, the mirror image, which the sim
+// then jumps to.
+func (s *Server) SyncThrottle(sim float64, autothrottle bool) {
+	if ts, ok := s.backend.(control.ThrottleSyncer); ok {
+		ts.SyncThrottle(s.axisConfig(control.AxisThrottle).Curve.Apply(sim), autothrottle)
+	}
+}
+
 // axisConfig returns the current calibration for one axis. Mu-guarded since
 // CONFIG_SET can mutate cfg concurrently with failsafeLoop reading it.
 func (s *Server) axisConfig(id control.AxisID) config.AxisConfig {

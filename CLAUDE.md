@@ -126,9 +126,12 @@ any listed in config's `simconnect_controls`, which go to SimConnect. If vJoy ca
 roll=X, throttle=Z, rudder=RZ, button N = `ButtonID` N) since the MSFS binding is where meaning is set.
 
 A vJoy axis holds its last value, so `control/vjoy` implements `control.ThrottleSyncer`: telemetry
-feeds it the sim's throttle and it moves the vJoy axis to match after an in-sim change — never while
-autothrottle is active, and only for a move away from where the sim settled after its own last write
-(see `control/vjoy/sync.go`; without that, a non-linear MSFS sensitivity curve would feedback-loop).
+feeds the sim's throttle through `transport.Server.SyncThrottle`, which applies the throttle's
+calibration first (as if the phone sent that position — skipping it wrote the mirror image when invert
+was on, and the sim jumped to it), and vJoy moves its axis to match after an in-sim change. Never while
+autothrottle is active, and after any write the phone owns the throttle until the sim's lever stops
+moving (many aircraft slew it); only a later, finished move away from that settled position resyncs —
+see `control/vjoy/sync.go`. The app's `_ThrottleLever` follows the same settle rule.
 
 ### Calibration is server-side except recentering
 

@@ -139,9 +139,11 @@ type Output interface {
 
 // ThrottleSyncer is implemented by a backend whose throttle input holds its
 // last written value (vJoy), so it can be moved to match the sim's actual
-// lever after the sim changed it some other way. Fed by telemetry.
+// lever after the sim changed it some other way. Fed by telemetry through
+// transport.Server, which applies the throttle calibration first — value
+// is in the same units SetAxis receives.
 type ThrottleSyncer interface {
-	SyncThrottle(sim float64, autothrottle bool)
+	SyncThrottle(value float64, autothrottle bool)
 }
 
 // SignedThrottleSetter is implemented by a backend whose throttle driver can

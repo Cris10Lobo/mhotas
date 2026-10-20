@@ -80,9 +80,9 @@ func (r *Router) SetSignedThrottleIdle(idle float64) {
 	}
 }
 
-func (r *Router) SyncThrottle(sim float64, autothrottle bool) {
+func (r *Router) SyncThrottle(value float64, autothrottle bool) {
 	if s, ok := r.throttle().(ThrottleSyncer); ok {
-		s.SyncThrottle(sim, autothrottle)
+		s.SyncThrottle(value, autothrottle)
 	}
 }
 
