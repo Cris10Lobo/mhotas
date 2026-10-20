@@ -111,8 +111,8 @@ void main() {
       // fixed grace period: mid-travel readings must not drag the knob back.
       controller.add(_telemetry(throttlePercent: 0.1));
       await tester.pumpAndSettle();
-      await tester.runAsync(
-          () => Future.delayed(const Duration(milliseconds: 400)));
+      await tester
+          .runAsync(() => Future.delayed(const Duration(milliseconds: 400)));
       controller.add(_telemetry(throttlePercent: 0.2));
       await tester.pumpAndSettle();
       expect(tester.getCenter(knob).dy, commandedY);
