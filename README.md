@@ -49,6 +49,10 @@ vJoy setup:
    | 13 / 14 | throttle_incr / throttle_decr | Increase / decrease throttle |
    | 15 | throttle_reverse_arm | Reverse thrust (hold) |
 
+   With `signed_throttle` on, `signed_throttle_idle` (Settings → Throttle on the phone, applied live)
+   sets where idle sits on the vJoy axis — on a detented airliner it's well below the middle. Tune it
+   until the phone's idle puts the sim's lever exactly at idle.
+
    The server also logs this table at startup. Pitch direction comes from the MSFS binding: if it's
    backwards, tick "reverse axis" there.
 

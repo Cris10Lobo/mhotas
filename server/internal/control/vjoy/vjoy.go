@@ -49,6 +49,7 @@ type Backend struct {
 
 	throttleMu sync.Mutex // serializes phone writes with telemetry resyncs
 	sync       throttleSync
+	idlePoint  float64 // guarded by throttleMu
 }
 
 // New acquires vJoy device 1. It fails only if vJoy itself is unusable
@@ -101,7 +102,7 @@ func (b *Backend) SetAxis(id control.AxisID, value float64) error {
 	if !signed {
 		b.holdReverse(value < 0)
 	}
-	return vjoylink.SetAxis(deviceID, a.usage, throttleToRaw(value, signed, a.max))
+	return vjoylink.SetAxis(deviceID, a.usage, throttleToRaw(value, signed, b.idlePoint, a.max))
 }
 
 // SyncThrottle implements control.ThrottleSyncer: moves the vJoy throttle
@@ -118,7 +119,7 @@ func (b *Backend) SyncThrottle(value float64, autothrottle bool) {
 	b.throttleMu.Lock()
 	defer b.throttleMu.Unlock()
 	if b.sync.shouldSync(value, autothrottle, time.Now()) {
-		vjoylink.SetAxis(deviceID, a.usage, throttleToRaw(value, b.signed.Load(), a.max))
+		vjoylink.SetAxis(deviceID, a.usage, throttleToRaw(value, b.signed.Load(), b.idlePoint, a.max))
 	}
 }
 
@@ -154,8 +155,7 @@ func (b *Backend) Close() error {
 }
 
 // SetSignedThrottle and SetSignedThrottleIdle implement
-// control.SignedThrottleSetter. The idle offset has no vJoy meaning — where
-// idle falls is set by the MSFS axis binding — so it's ignored.
+// control.SignedThrottleSetter.
 func (b *Backend) SetSignedThrottle(signed bool) {
 	b.signed.Store(signed)
 	if signed {
@@ -163,4 +163,8 @@ func (b *Backend) SetSignedThrottle(signed bool) {
 	}
 }
 
-func (b *Backend) SetSignedThrottleIdle(float64) {}
+func (b *Backend) SetSignedThrottleIdle(idle float64) {
+	b.throttleMu.Lock()
+	b.idlePoint = idle
+	b.throttleMu.Unlock()
+}
