@@ -37,7 +37,7 @@ func TestToTelemetryHapticFields(t *testing.T) {
 
 func TestPercentToUnit(t *testing.T) {
 	cases := []struct {
-		pct  int32
+		pct  float32
 		want float32
 	}{
 		{pct: 0, want: 0},

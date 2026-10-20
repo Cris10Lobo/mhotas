@@ -69,6 +69,32 @@ void main() {
       expect(find.text('2/4'), findsOneWidget);
     });
 
+    testWidgets('throttle lever shows A/T badge only while autothrottle is on',
+        (tester) async {
+      final controller = StreamController<proto.Telemetry>();
+      addTearDown(controller.close);
+      await _pumpScreen(tester, overrides: [
+        telemetryProvider.overrideWith((ref) => controller.stream),
+      ]);
+      controller.add(_telemetry(autothrottleActive: true));
+      await tester.pump();
+      expect(find.text('A/T'), findsOneWidget);
+
+      controller.add(_telemetry());
+      await tester.pump();
+      await tester.pump();
+      expect(find.text('A/T'), findsNothing);
+    });
+
+    testWidgets('trim rocker shows the sim\'s elevator trim', (tester) async {
+      await _pumpScreen(tester, overrides: [
+        telemetryProvider.overrideWith(
+            (ref) => Stream.value(_telemetry(elevatorTrim: -0.25))),
+      ]);
+      await tester.pump();
+      expect(find.text('-25%'), findsOneWidget);
+    });
+
     testWidgets('gear toggle bolds DOWN when telemetry says down',
         (tester) async {
       await _pumpScreen(tester, overrides: [
@@ -530,6 +556,8 @@ proto.Telemetry _telemetry({
   bool stallWarning = false,
   bool onGround = false,
   double groundSpeedKnots = 0,
+  double elevatorTrim = 0,
+  bool autothrottleActive = false,
 }) =>
     proto.Telemetry(
       flapHandleIndex: flapHandleIndex,
@@ -541,6 +569,8 @@ proto.Telemetry _telemetry({
       stallWarning: stallWarning,
       onGround: onGround,
       groundSpeedKnots: groundSpeedKnots,
+      elevatorTrim: elevatorTrim,
+      autothrottleActive: autothrottleActive,
     );
 
 /// Records every HapticFeedback (flutter/platform channel) and vibration

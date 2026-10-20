@@ -9,7 +9,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 class ProtocolVersion {
-  static const int current = 7;
+  static const int current = 8;
 }
 
 class PacketType {
@@ -211,13 +211,16 @@ class GearPosition {
   static const int transit = 2;
 }
 
-const int telemetryPacketSize = headerSize + 14;
+const int telemetryPacketSize = headerSize + 22;
 
 /// Bits packed into Telemetry's wire byte 13 (was a plain "reserved, must
 /// be 0" byte through protocol v6 — see docs/protocol.md).
 class _TelemetryFlags {
   static const int stallWarning = 1 << 0;
   static const int onGround = 1 << 1;
+  static const int spoilersArmed = 1 << 2;
+  static const int autopilotMaster = 1 << 3;
+  static const int autothrottleActive = 1 << 4;
 }
 
 /// Live aircraft state read from SimConnect, pushed server → phone. A fixed
@@ -258,6 +261,20 @@ class Telemetry {
   /// rumble's pulse rate. Meaningless while [onGround] is false.
   final double groundSpeedKnots;
 
+  /// SimConnect's SPOILERS HANDLE POSITION, 0..1.
+  final double spoilersHandle;
+
+  final bool spoilersArmed;
+
+  /// SimConnect's ELEVATOR TRIM PCT, -1..1.
+  final double elevatorTrim;
+
+  final bool autopilotMaster;
+
+  /// The sim's autothrottle is driving the throttle — shown as an A/T badge
+  /// on the throttle lever.
+  final bool autothrottleActive;
+
   const Telemetry({
     required this.flapHandleIndex,
     required this.flapHandleIndexMax,
@@ -268,6 +285,11 @@ class Telemetry {
     required this.stallWarning,
     required this.onGround,
     required this.groundSpeedKnots,
+    this.spoilersHandle = 0,
+    this.spoilersArmed = false,
+    this.elevatorTrim = 0,
+    this.autopilotMaster = false,
+    this.autothrottleActive = false,
   });
 }
 
@@ -287,6 +309,11 @@ Telemetry decodeTelemetry(Uint8List b) {
     stallWarning: flags & _TelemetryFlags.stallWarning != 0,
     onGround: flags & _TelemetryFlags.onGround != 0,
     groundSpeedKnots: bd.getFloat32(14, Endian.little),
+    spoilersHandle: bd.getFloat32(18, Endian.little),
+    spoilersArmed: flags & _TelemetryFlags.spoilersArmed != 0,
+    elevatorTrim: bd.getFloat32(22, Endian.little),
+    autopilotMaster: flags & _TelemetryFlags.autopilotMaster != 0,
+    autothrottleActive: flags & _TelemetryFlags.autothrottleActive != 0,
   );
 }
 

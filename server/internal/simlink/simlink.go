@@ -108,11 +108,17 @@ type aircraftStateData struct {
 	FlapHandleIndex        int32
 	FlapNumHandlePositions int32
 	GearPositionPercent    int32
-	ThrottleLeverPercent   int32
+	ThrottleLeverPercent   float32
 	ParkingBrakeSet        int32
 	StallWarning           int32
 	OnGround               int32
 	GroundVelocityKnots    float32
+	SpoilersHandlePercent  float32
+	SpoilersArmed          int32
+	ElevatorTrim           float32
+	AutopilotMaster        int32
+	AutothrottleArmed      int32
+	ManagedThrottleActive  int32
 }
 
 type AircraftState struct {
@@ -131,7 +137,7 @@ type AircraftState struct {
 	// commanded. Feeds telemetry.Source so the phone can mirror manual
 	// in-sim throttle changes instead of fighting them. Not yet confirmed
 	// against a live sim.
-	ThrottleLeverPercent int32
+	ThrottleLeverPercent float32
 	// ParkingBrakeSet is BRAKE PARKING POSITION, 0 or 1 — same
 	// don't-guess-locally rationale as ThrottleLeverPercent, applied to a
 	// toggle button instead of a continuous axis: the app can show whether
@@ -147,6 +153,19 @@ type AircraftState struct {
 	// GroundVelocityKnots is GROUND VELOCITY, knots — drives the taxi/
 	// ground-roll rumble's pulse rate. Not yet confirmed against a live sim.
 	GroundVelocityKnots float32
+	// SpoilersHandlePercent is SPOILERS HANDLE POSITION, 0..100.
+	SpoilersHandlePercent float32
+	// SpoilersArmed is SPOILERS ARMED, 0 or 1.
+	SpoilersArmed int32
+	// ElevatorTrim is ELEVATOR TRIM PCT, -1..1.
+	ElevatorTrim float32
+	// AutopilotMaster is AUTOPILOT MASTER, 0 or 1.
+	AutopilotMaster int32
+	// AutothrottleArmed (AUTOPILOT THROTTLE ARM) and ManagedThrottleActive
+	// (AUTOPILOT MANAGED THROTTLE ACTIVE) are read separately because
+	// aircraft disagree on which one their autothrottle actually sets.
+	AutothrottleArmed     int32
+	ManagedThrottleActive int32
 }
 
 // LatestState returns the most recent aircraft-state reading, or false if
@@ -412,22 +431,30 @@ func (c *Client) watchInputEvents(messages <-chan engine.Message) {
 }
 
 // setupTelemetryRead registers the aircraft-state data definition and
-// requests updates once per second.
+// requests an update on every sim frame where any value changed — the phone
+// mirrors the sim as the source of truth, so 1Hz polling showed in-sim
+// changes up to a second late. telemetry.Source caps the send rate.
 func setupTelemetryRead(client engine.Client) {
 	client.AddToDataDefinition(defAircraftState, "FLAPS HANDLE INDEX", "number", types.SIMCONNECT_DATATYPE_INT32, 0, 0)
 	client.AddToDataDefinition(defAircraftState, "FLAPS NUM HANDLE POSITIONS", "number", types.SIMCONNECT_DATATYPE_INT32, 0, 1)
 	client.AddToDataDefinition(defAircraftState, "GEAR POSITION", "percent", types.SIMCONNECT_DATATYPE_INT32, 0, 2)
-	client.AddToDataDefinition(defAircraftState, "GENERAL ENG THROTTLE LEVER POSITION:1", "percent", types.SIMCONNECT_DATATYPE_INT32, 0, 3)
+	client.AddToDataDefinition(defAircraftState, "GENERAL ENG THROTTLE LEVER POSITION:1", "percent", types.SIMCONNECT_DATATYPE_FLOAT32, 0, 3)
 	client.AddToDataDefinition(defAircraftState, "BRAKE PARKING POSITION", "bool", types.SIMCONNECT_DATATYPE_INT32, 0, 4)
 	client.AddToDataDefinition(defAircraftState, "STALL WARNING", "bool", types.SIMCONNECT_DATATYPE_INT32, 0, 5)
 	client.AddToDataDefinition(defAircraftState, "SIM ON GROUND", "bool", types.SIMCONNECT_DATATYPE_INT32, 0, 6)
 	client.AddToDataDefinition(defAircraftState, "GROUND VELOCITY", "knots", types.SIMCONNECT_DATATYPE_FLOAT32, 0, 7)
+	client.AddToDataDefinition(defAircraftState, "SPOILERS HANDLE POSITION", "percent", types.SIMCONNECT_DATATYPE_FLOAT32, 0, 8)
+	client.AddToDataDefinition(defAircraftState, "SPOILERS ARMED", "bool", types.SIMCONNECT_DATATYPE_INT32, 0, 9)
+	client.AddToDataDefinition(defAircraftState, "ELEVATOR TRIM PCT", "percent over 100", types.SIMCONNECT_DATATYPE_FLOAT32, 0, 10)
+	client.AddToDataDefinition(defAircraftState, "AUTOPILOT MASTER", "bool", types.SIMCONNECT_DATATYPE_INT32, 0, 11)
+	client.AddToDataDefinition(defAircraftState, "AUTOPILOT THROTTLE ARM", "bool", types.SIMCONNECT_DATATYPE_INT32, 0, 12)
+	client.AddToDataDefinition(defAircraftState, "AUTOPILOT MANAGED THROTTLE ACTIVE", "bool", types.SIMCONNECT_DATATYPE_INT32, 0, 13)
 
 	client.RequestDataOnSimObject(
 		reqAircraftState, defAircraftState,
 		types.SIMCONNECT_OBJECT_ID_USER,
-		types.SIMCONNECT_PERIOD_SECOND,
-		types.SIMCONNECT_DATA_REQUEST_FLAG_DEFAULT,
+		types.SIMCONNECT_PERIOD_SIM_FRAME,
+		types.SIMCONNECT_DATA_REQUEST_FLAG_CHANGED,
 		0, 0, 0,
 	)
 }
@@ -459,6 +486,12 @@ func (c *Client) watchTelemetry(messages <-chan engine.Message) {
 			StallWarning:           as.StallWarning,
 			OnGround:               as.OnGround,
 			GroundVelocityKnots:    as.GroundVelocityKnots,
+			SpoilersHandlePercent:  as.SpoilersHandlePercent,
+			SpoilersArmed:          as.SpoilersArmed,
+			ElevatorTrim:           as.ElevatorTrim,
+			AutopilotMaster:        as.AutopilotMaster,
+			AutothrottleArmed:      as.AutothrottleArmed,
+			ManagedThrottleActive:  as.ManagedThrottleActive,
 		})
 	}
 }

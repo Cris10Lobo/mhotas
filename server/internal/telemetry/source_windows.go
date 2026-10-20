@@ -10,10 +10,15 @@ import (
 	"mhotas/pkg/protocol"
 )
 
-// pollInterval controls how often Run checks simlink's latest aircraft
-// state for a change. SimConnect delivers updates at 1Hz (see
-// simlink.setupTelemetryRead); polling faster just wastes cycles.
-const pollInterval = 100 * time.Millisecond
+// pollInterval caps the TELEMETRY send rate at ~20Hz. SimConnect itself
+// reports every changed sim frame (see simlink.setupTelemetryRead), which
+// would be far more packets than the phone can use.
+const pollInterval = 50 * time.Millisecond
+
+// keepaliveInterval re-sends unchanged state so a phone that just
+// (re)connected gets the full picture without waiting for something in the
+// sim to change.
+const keepaliveInterval = time.Second
 
 // Source reads live aircraft state from SimConnect (via simlink) and
 // pushes it to a Sink whenever it changes.
@@ -34,6 +39,7 @@ func (s *Source) Run(ctx context.Context, sink Sink) error {
 	defer ticker.Stop()
 
 	var last protocol.Telemetry
+	var lastSent time.Time
 	have := false
 
 	for {
@@ -54,12 +60,18 @@ func (s *Source) Run(ctx context.Context, sink Sink) error {
 				StallWarning:           as.StallWarning,
 				OnGround:               as.OnGround,
 				GroundVelocityKnots:    as.GroundVelocityKnots,
+				SpoilersHandlePercent:  as.SpoilersHandlePercent,
+				SpoilersArmed:          as.SpoilersArmed,
+				ElevatorTrim:           as.ElevatorTrim,
+				AutopilotMaster:        as.AutopilotMaster,
+				AutothrottleArmed:      as.AutothrottleArmed,
+				ManagedThrottleActive:  as.ManagedThrottleActive,
 				Paused:                 s.client.Paused(),
 			})
-			if have && t == last {
+			if have && t == last && time.Since(lastSent) < keepaliveInterval {
 				continue
 			}
-			last, have = t, true
+			last, have, lastSent = t, true, time.Now()
 			if err := sink.SendTelemetry(t); err != nil {
 				return err
 			}
