@@ -128,6 +128,10 @@ Four fixed-order 18-byte axis-calibration blocks, pitch/roll/throttle/rudder:
 | 13                      | 1    | `signedThrottle`     | uint8: 0/1     |
 | 14                      | 4    | `signedThrottleIdle` | float32, -1..1 |
 
+On the `throttle` block, `invert` reverses the final axis output after the idle remap (like MSFS's own
+"reverse axis"), not the input value: inverting the input would swap the forward and reverse zones around
+`signedThrottleIdle`, putting phone idle far up the forward range whenever idle isn't at the center.
+
 `signedThrottle`/`signedThrottleIdle` only mean anything on the `throttle` block — see "Reverse-thrust
 convention" below. Carried on every axis anyway, to keep one shared block layout; a no-op on
 pitch/roll/rudder.

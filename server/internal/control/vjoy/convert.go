@@ -21,10 +21,15 @@ func toRaw(v float64, max int32) int32 {
 // set by the aircraft and the MSFS binding (e.g. a detented airliner whose
 // idle is a quarter of the way up). Unsigned (default): the magnitude
 // across the whole axis, idle at 0, with reverse carried separately by the
-// reverse-hold button.
-func throttleToRaw(v float64, signed bool, idlePoint float64, max int32) int32 {
+// reverse-hold button. invert reverses the final axis position (see
+// control.SignedThrottleSetter.SetThrottleInvert).
+func throttleToRaw(v float64, signed bool, idlePoint float64, invert bool, max int32) int32 {
+	r := control.RemapIdle(math.Abs(v), -1)
 	if signed {
-		return toRaw(control.RemapIdle(v, idlePoint), max)
+		r = control.RemapIdle(v, idlePoint)
 	}
-	return toRaw(control.RemapIdle(math.Abs(v), -1), max)
+	if invert {
+		r = -r
+	}
+	return toRaw(r, max)
 }

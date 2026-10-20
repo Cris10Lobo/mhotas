@@ -90,6 +90,7 @@ func New(cfg config.Config, backend control.Output, log *slog.Logger, configPath
 	if setter, ok := backend.(control.SignedThrottleSetter); ok {
 		setter.SetSignedThrottle(cfg.Throttle.SignedThrottle)
 		setter.SetSignedThrottleIdle(cfg.Throttle.SignedThrottleIdle)
+		setter.SetThrottleInvert(cfg.Throttle.Curve.Invert)
 	}
 	return &Server{
 		conn:            conn,
@@ -111,8 +112,20 @@ func New(cfg config.Config, backend control.Output, log *slog.Logger, configPath
 // then jumps to.
 func (s *Server) SyncThrottle(sim float64, autothrottle bool) {
 	if ts, ok := s.backend.(control.ThrottleSyncer); ok {
-		ts.SyncThrottle(s.axisConfig(control.AxisThrottle).Curve.Apply(sim), autothrottle)
+		ts.SyncThrottle(s.curve(control.AxisThrottle, s.axisConfig(control.AxisThrottle)).Apply(sim), autothrottle)
 	}
+}
+
+// curve is the calibration curve transport itself applies. Throttle invert
+// is left out when the backend takes it over (control.SignedThrottleSetter):
+// the backend reverses the final output after its idle remap, which is
+// what invert has to mean when idle isn't at the axis center.
+func (s *Server) curve(id control.AxisID, ac config.AxisConfig) calibration.Curve {
+	c := ac.Curve
+	if _, ok := s.backend.(control.SignedThrottleSetter); ok && id == control.AxisThrottle {
+		c.Invert = false
+	}
+	return c
 }
 
 // axisConfig returns the current calibration for one axis. Mu-guarded since
@@ -315,7 +328,7 @@ func (s *Server) handleAxis(addr *net.UDPAddr, data []byte) {
 }
 
 func (s *Server) applyAxis(id control.AxisID, raw float64, ac config.AxisConfig) {
-	shaped, changed := s.smooth(id, ac.Curve.Apply(raw), ac.Smoothing)
+	shaped, changed := s.smooth(id, s.curve(id, ac).Apply(raw), ac.Smoothing)
 	if !changed {
 		// Value hasn't moved since the last packet — don't re-assert it.
 		// Without this, mhotas would resend the same throttle/rudder value
@@ -448,6 +461,7 @@ func (s *Server) handleConfigSet(addr *net.UDPAddr, data []byte) {
 		if setter, ok := s.backend.(control.SignedThrottleSetter); ok {
 			setter.SetSignedThrottle(ac.SignedThrottle)
 			setter.SetSignedThrottleIdle(ac.SignedThrottleIdle)
+			setter.SetThrottleInvert(ac.Curve.Invert)
 		}
 	}
 	if err := config.Save(s.configPath, s.currentConfig()); err != nil {

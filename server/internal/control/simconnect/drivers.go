@@ -201,12 +201,23 @@ type throttleEx1Driver struct {
 	log    *slog.Logger
 
 	signed atomic.Bool
+	invert atomic.Bool
 
 	idleMu    sync.Mutex
 	idlePoint float64
 }
 
 func (d *throttleEx1Driver) SetSignedThrottle(signed bool) { d.signed.Store(signed) }
+
+func (d *throttleEx1Driver) SetThrottleInvert(invert bool) { d.invert.Store(invert) }
+
+// setThrottle applies SetThrottleInvert to the final raw value.
+func (d *throttleEx1Driver) setThrottle(raw int32) error {
+	if d.invert.Load() {
+		raw = -raw
+	}
+	return d.client.SetThrottle(raw)
+}
 
 func (d *throttleEx1Driver) SetSignedThrottleIdle(idle float64) {
 	d.idleMu.Lock()
@@ -219,7 +230,7 @@ func (d *throttleEx1Driver) SetAxis(value float64) error {
 		d.idleMu.Lock()
 		idle := d.idlePoint
 		d.idleMu.Unlock()
-		return d.client.SetThrottle(toSignedThrottleRaw(value, idle, simlink.AxisRange))
+		return d.setThrottle(toSignedThrottleRaw(value, idle, simlink.AxisRange))
 	}
 
 	wantReverse := value < 0
@@ -230,7 +241,7 @@ func (d *throttleEx1Driver) SetAxis(value float64) error {
 	if wantReverse {
 		magnitude = -value
 	}
-	return d.client.SetThrottle(toSignedThrottleRaw(magnitude, stockIdlePoint, simlink.AxisRange))
+	return d.setThrottle(toSignedThrottleRaw(magnitude, stockIdlePoint, simlink.AxisRange))
 }
 
 // toeBrakeDriver is momentary (apply while held, release on lift), unlike

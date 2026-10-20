@@ -45,6 +45,7 @@ type Backend struct {
 	axes        map[control.AxisID]axis // only axes the device actually has
 	buttons     int
 	signed      atomic.Bool
+	invert      atomic.Bool
 	reverseHeld atomic.Bool
 
 	throttleMu sync.Mutex // serializes phone writes with telemetry resyncs
@@ -102,7 +103,7 @@ func (b *Backend) SetAxis(id control.AxisID, value float64) error {
 	if !signed {
 		b.holdReverse(value < 0)
 	}
-	return vjoylink.SetAxis(deviceID, a.usage, throttleToRaw(value, signed, b.idlePoint, a.max))
+	return vjoylink.SetAxis(deviceID, a.usage, throttleToRaw(value, signed, b.idlePoint, b.invert.Load(), a.max))
 }
 
 // SyncThrottle implements control.ThrottleSyncer: moves the vJoy throttle
@@ -119,7 +120,7 @@ func (b *Backend) SyncThrottle(value float64, autothrottle bool) {
 	b.throttleMu.Lock()
 	defer b.throttleMu.Unlock()
 	if b.sync.shouldSync(value, autothrottle, time.Now()) {
-		vjoylink.SetAxis(deviceID, a.usage, throttleToRaw(value, b.signed.Load(), b.idlePoint, a.max))
+		vjoylink.SetAxis(deviceID, a.usage, throttleToRaw(value, b.signed.Load(), b.idlePoint, b.invert.Load(), a.max))
 	}
 }
 
@@ -162,6 +163,8 @@ func (b *Backend) SetSignedThrottle(signed bool) {
 		b.holdReverse(false)
 	}
 }
+
+func (b *Backend) SetThrottleInvert(invert bool) { b.invert.Store(invert) }
 
 func (b *Backend) SetSignedThrottleIdle(idle float64) {
 	b.throttleMu.Lock()

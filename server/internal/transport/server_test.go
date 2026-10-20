@@ -412,6 +412,13 @@ type signedRecorder struct {
 	fakeBackend
 	signed bool
 	idle   float64
+	invert bool
+}
+
+func (b *signedRecorder) SetThrottleInvert(invert bool) {
+	b.mu.Lock()
+	b.invert = invert
+	b.mu.Unlock()
 }
 
 func (b *signedRecorder) SetSignedThrottle(signed bool) {
@@ -430,6 +437,12 @@ func (b *signedRecorder) settings() (bool, float64) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.signed, b.idle
+}
+
+func (b *signedRecorder) inverted() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.invert
 }
 
 // The phone Settings page's signed-throttle toggle and idle slider must
@@ -464,15 +477,31 @@ func TestSignedThrottleSettingsReachRoutedBackend(t *testing.T) {
 
 	pkt := protocol.EncodeConfigSet(2, protocol.ConfigSet{
 		Axis:        protocol.ConfigAxisThrottle,
-		Calibration: protocol.AxisCalibration{SignedThrottle: true, SignedThrottleIdle: -0.45},
+		Calibration: protocol.AxisCalibration{SignedThrottle: true, SignedThrottleIdle: -0.45, Invert: true},
 	})
 	if _, err := client.Write(pkt); err != nil {
 		t.Fatalf("write CONFIG_SET: %v", err)
 	}
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		if signed, idle := vj.settings(); signed && math.Abs(idle+0.45) < 1e-6 {
-			return
+		if signed, idle := vj.settings(); signed && math.Abs(idle+0.45) < 1e-6 && vj.inverted() {
+			// The backend reverses the axis itself, so transport must not
+			// also invert the value it sends (that swapped forward/reverse
+			// zones around idle).
+			pkt = protocol.EncodeAxis(3, protocol.Axis{Throttle: 0.5})
+			if _, err := client.Write(pkt); err != nil {
+				t.Fatalf("write AXIS: %v", err)
+			}
+			for time.Now().Before(deadline) {
+				if v, ok := vj.lastAxis(control.AxisThrottle); ok {
+					if v != 0.5 {
+						t.Fatalf("throttle reached backend as %v, want 0.5 (uninverted)", v)
+					}
+					return
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+			t.Fatal("timed out waiting for throttle AXIS")
 		}
 		time.Sleep(10 * time.Millisecond)
 	}

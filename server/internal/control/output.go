@@ -156,7 +156,14 @@ type ThrottleSyncer interface {
 // only thing that actually knows. Optional — transport type-asserts for it
 // rather than requiring it on Output, so a backend with nothing throttle-
 // specific to switch (logbackend, vjoy) needs no stub.
+//
+// SetThrottleInvert reverses the throttle's final output, after the idle
+// remap — like ticking "reverse axis" in MSFS. Inverting the input before
+// the remap instead (what calibration.Curve's Invert does for other axes)
+// swaps the forward and reverse zones around idle, so with idle anywhere
+// but center, phone idle lands far up the forward range.
 type SignedThrottleSetter interface {
 	SetSignedThrottle(signed bool)
 	SetSignedThrottleIdle(idle float64)
+	SetThrottleInvert(invert bool)
 }

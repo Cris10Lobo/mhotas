@@ -74,6 +74,12 @@ func (r *Router) SetSignedThrottle(signed bool) {
 	}
 }
 
+func (r *Router) SetThrottleInvert(invert bool) {
+	if s, ok := r.throttle().(SignedThrottleSetter); ok {
+		s.SetThrottleInvert(invert)
+	}
+}
+
 func (r *Router) SetSignedThrottleIdle(idle float64) {
 	if s, ok := r.throttle().(SignedThrottleSetter); ok {
 		s.SetSignedThrottleIdle(idle)
