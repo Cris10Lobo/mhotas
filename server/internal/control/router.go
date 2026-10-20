@@ -3,6 +3,7 @@ package control
 import (
 	"errors"
 	"fmt"
+	"sort"
 )
 
 // Router sends each control to primary, except the named ones, which go to
@@ -51,16 +52,18 @@ func (r *Router) Ready() bool { return r.primary.Ready() && r.fallback.Ready() }
 
 func (r *Router) Close() error { return errors.Join(r.primary.Close(), r.fallback.Close()) }
 
-// Route reports which backend a control (by config name) goes to — for the
-// TUI's route table.
-func (r *Router) Route(name string) string {
-	if id, ok := AxisByName(name); ok && r.axes[id] {
-		return r.fallback.Name()
+// FallbackControls lists, sorted, the controls going to fallback — for the
+// TUI.
+func (r *Router) FallbackControls() []string {
+	var names []string
+	for id := range r.axes {
+		names = append(names, id.String())
 	}
-	if id, ok := ButtonByName(name); ok && r.buttons[id] {
-		return r.fallback.Name()
+	for id := range r.buttons {
+		names = append(names, id.String())
 	}
-	return r.primary.Name()
+	sort.Strings(names)
+	return names
 }
 
 // SetSignedThrottle/SetSignedThrottleIdle forward to whichever backend

@@ -9,6 +9,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -60,6 +61,16 @@ func run() error {
 	}
 
 	input := *inputMode
+	if input == "" && useTUI && *backendName == "simconnect" {
+		picked, err := tui.PickInput()
+		if errors.Is(err, tui.ErrCancelled) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		input = picked
+	}
 	if input == "" {
 		input = "vjoy"
 	}
@@ -97,7 +108,7 @@ func run() error {
 	serverErr := make(chan error, 1)
 	go func() { serverErr <- srv.Run(ctx) }()
 
-	p := tea.NewProgram(tui.New(srv, backend, tail), tea.WithAltScreen())
+	p := tea.NewProgram(tui.New(srv, backend, input, tail), tea.WithAltScreen())
 	// A signal (Ctrl+C at the OS level, not the TUI's own 'q'/ctrl+c key
 	// handling) cancels ctx directly — make sure that also tears down the
 	// TUI instead of leaving it on screen after the server's already gone.

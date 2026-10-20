@@ -34,11 +34,8 @@ func TestRouterSendsNamedControlsToFallback(t *testing.T) {
 	if len(sc.axes) != 1 || sc.axes[0] != AxisRudder || len(sc.buttons) != 1 || sc.buttons[0] != ButtonGear {
 		t.Errorf("fallback got axes %v buttons %v, want [rudder] [gear]", sc.axes, sc.buttons)
 	}
-	if got := r.Route("gear"); got != "simconnect" {
-		t.Errorf("Route(gear) = %q, want simconnect", got)
-	}
-	if got := r.Route("pitch"); got != "vjoy" {
-		t.Errorf("Route(pitch) = %q, want vjoy", got)
+	if got := r.FallbackControls(); len(got) != 2 || got[0] != "gear" || got[1] != "rudder" {
+		t.Errorf("FallbackControls() = %v, want [gear rudder]", got)
 	}
 }
 
