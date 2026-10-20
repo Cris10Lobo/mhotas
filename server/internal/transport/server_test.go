@@ -3,6 +3,7 @@ package transport
 import (
 	"context"
 	"log/slog"
+	"math"
 	"net"
 	"sync"
 	"testing"
@@ -403,4 +404,78 @@ func TestSyncThrottleAppliesCalibration(t *testing.T) {
 	if len(backend.synced) != 1 || backend.synced[0] != -0.8 {
 		t.Fatalf("backend got %v, want [-0.8]", backend.synced)
 	}
+}
+
+// signedRecorder stands in for the vJoy backend behind a control.Router,
+// recording the signed-throttle settings it's given.
+type signedRecorder struct {
+	fakeBackend
+	signed bool
+	idle   float64
+}
+
+func (b *signedRecorder) SetSignedThrottle(signed bool) {
+	b.mu.Lock()
+	b.signed = signed
+	b.mu.Unlock()
+}
+
+func (b *signedRecorder) SetSignedThrottleIdle(idle float64) {
+	b.mu.Lock()
+	b.idle = idle
+	b.mu.Unlock()
+}
+
+func (b *signedRecorder) settings() (bool, float64) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.signed, b.idle
+}
+
+// The phone Settings page's signed-throttle toggle and idle slider must
+// reach the vJoy backend through the Router, at startup and live.
+func TestSignedThrottleSettingsReachRoutedBackend(t *testing.T) {
+	cfg := config.Default()
+	cfg.ListenPort = 0
+	cfg.Throttle.SignedThrottle = true
+	cfg.Throttle.SignedThrottleIdle = -0.25
+	vj := &signedRecorder{}
+	router, err := control.NewRouter(vj, &fakeBackend{}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv, err := New(cfg, router, slog.New(slog.DiscardHandler), "")
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if signed, idle := vj.settings(); !signed || idle != -0.25 {
+		t.Fatalf("startup: got signed=%v idle=%v, want true -0.25 from config", signed, idle)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go srv.Run(ctx)
+	client, err := net.DialUDP("udp", nil, srv.Addr())
+	if err != nil {
+		t.Fatalf("DialUDP: %v", err)
+	}
+	t.Cleanup(func() { client.Close() })
+	sendHello(t, client)
+
+	pkt := protocol.EncodeConfigSet(2, protocol.ConfigSet{
+		Axis:        protocol.ConfigAxisThrottle,
+		Calibration: protocol.AxisCalibration{SignedThrottle: true, SignedThrottleIdle: -0.45},
+	})
+	if _, err := client.Write(pkt); err != nil {
+		t.Fatalf("write CONFIG_SET: %v", err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if signed, idle := vj.settings(); signed && math.Abs(idle+0.45) < 1e-6 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	signed, idle := vj.settings()
+	t.Fatalf("after CONFIG_SET: got signed=%v idle=%v, want true -0.45", signed, idle)
 }
