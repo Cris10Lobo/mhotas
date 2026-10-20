@@ -3,6 +3,7 @@ package transport
 import (
 	"context"
 	"log/slog"
+	"math"
 	"net"
 	"sync"
 	"testing"
@@ -376,4 +377,137 @@ func TestFailsafeNeutralizesAxisAfterTimeout(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatal("timed out waiting for failsafe to neutralize pitch while holding throttle")
+}
+
+// signedRecorder stands in for the vJoy backend, recording the
+// signed-throttle settings it's given.
+type signedRecorder struct {
+	fakeBackend
+	signed bool
+	idle   float64
+	invert bool
+}
+
+func (b *signedRecorder) SetThrottleInvert(invert bool) {
+	b.mu.Lock()
+	b.invert = invert
+	b.mu.Unlock()
+}
+
+func (b *signedRecorder) SetSignedThrottle(signed bool) {
+	b.mu.Lock()
+	b.signed = signed
+	b.mu.Unlock()
+}
+
+func (b *signedRecorder) SetSignedThrottleIdle(idle float64) {
+	b.mu.Lock()
+	b.idle = idle
+	b.mu.Unlock()
+}
+
+func (b *signedRecorder) settings() (bool, float64) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.signed, b.idle
+}
+
+func (b *signedRecorder) inverted() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.invert
+}
+
+// The phone Settings page's signed-throttle toggle and idle slider must
+// reach the backend, at startup and live.
+func TestSignedThrottleSettingsReachBackend(t *testing.T) {
+	cfg := config.Default()
+	cfg.ListenPort = 0
+	cfg.Throttle.SignedThrottle = true
+	cfg.Throttle.SignedThrottleIdle = -0.25
+	vj := &signedRecorder{}
+	srv, err := New(cfg, vj, slog.New(slog.DiscardHandler), "")
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if signed, idle := vj.settings(); !signed || idle != -0.25 {
+		t.Fatalf("startup: got signed=%v idle=%v, want true -0.25 from config", signed, idle)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go srv.Run(ctx)
+	client, err := net.DialUDP("udp", nil, srv.Addr())
+	if err != nil {
+		t.Fatalf("DialUDP: %v", err)
+	}
+	t.Cleanup(func() { client.Close() })
+	sendHello(t, client)
+
+	pkt := protocol.EncodeConfigSet(2, protocol.ConfigSet{
+		Axis:        protocol.ConfigAxisThrottle,
+		Calibration: protocol.AxisCalibration{SignedThrottle: true, SignedThrottleIdle: -0.45, Invert: true},
+	})
+	if _, err := client.Write(pkt); err != nil {
+		t.Fatalf("write CONFIG_SET: %v", err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if signed, idle := vj.settings(); signed && math.Abs(idle+0.45) < 1e-6 && vj.inverted() {
+			// The backend reverses the axis itself, so transport must not
+			// also invert the value it sends (that swapped forward/reverse
+			// zones around idle).
+			pkt = protocol.EncodeAxis(3, protocol.Axis{Throttle: 0.5})
+			if _, err := client.Write(pkt); err != nil {
+				t.Fatalf("write AXIS: %v", err)
+			}
+			for time.Now().Before(deadline) {
+				if v, ok := vj.lastAxis(control.AxisThrottle); ok {
+					if v != 0.5 {
+						t.Fatalf("throttle reached backend as %v, want 0.5 (uninverted)", v)
+					}
+					return
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+			t.Fatal("timed out waiting for throttle AXIS")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	signed, idle := vj.settings()
+	t.Fatalf("after CONFIG_SET: got signed=%v idle=%v, want true -0.45", signed, idle)
+}
+
+// The phone lever must show the input that produces the sim's lever
+// position: expo 0.5 turns a 0.5 input into 0.3125, so a sim lever at
+// 0.3125 must reach the phone as 0.5.
+func TestTelemetryThrottleUndoesCurve(t *testing.T) {
+	cfg := config.Default()
+	cfg.ListenPort = 0
+	cfg.Throttle.Curve.Expo = 0.5
+	srv, _, client := newTestServer(t, cfg)
+	sendHello(t, client)
+
+	if err := srv.SendTelemetry(protocol.Telemetry{ThrottlePercent: 0.3125}); err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]byte, 1500)
+	client.SetReadDeadline(time.Now().Add(2 * time.Second))
+	for {
+		n, err := client.Read(buf)
+		if err != nil {
+			t.Fatalf("read: %v", err)
+		}
+		if h, err := protocol.DecodeHeader(buf[:n]); err != nil || h.Type != protocol.TypeTelemetry {
+			continue // CONFIG etc.
+		}
+		got, err := protocol.DecodeTelemetry(buf[:n])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if math.Abs(float64(got.ThrottlePercent)-0.5) > 1e-4 {
+			t.Fatalf("phone got throttle %v, want 0.5", got.ThrottlePercent)
+		}
+		return
+	}
 }

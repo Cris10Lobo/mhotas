@@ -4,6 +4,8 @@
 // interface from its Windows-only Source.
 package simconnect
 
+import "mhotas/internal/control"
+
 // stockIdlePoint is where THROTTLE_AXIS_SET_EX1's raw range puts idle under
 // the arm-toggle convention (throttleEx1Driver's non-signed mode): idle sits
 // at the range's negative end, not raw 0 like elevator/aileron/rudder.
@@ -19,28 +21,10 @@ package simconnect
 // know in advance and never guesses at.
 const stockIdlePoint = -1
 
-// toSignedThrottleRaw remaps this project's own idle=0/reverse<0/forward>0
-// convention onto idlePoint before it reaches SetThrottle — idle..full-power
-// (0..1) stretches across idlePoint..1, and full-reverse..idle (-1..0)
-// stretches across -1..idlePoint. idlePoint=0 is the identity mapping (raw
-// signed value passed straight through, no remap at all); idlePoint=-1 is
-// the fixed arm-toggle convention (see stockIdlePoint) — any other value
-// only ever comes from whatever the operator or the phone's Settings screen
-// set it to (see throttleEx1Driver's SetSignedThrottleIdle), since this
-// project has no way to know where "idle" actually falls on a given
-// aircraft's own signed throttle scale.
+// toSignedThrottleRaw applies control.RemapIdle and scales the result to
+// SetThrottle's raw range. idlePoint=-1 is the fixed arm-toggle convention
+// (see stockIdlePoint); any other value is the operator's tuned
+// signed_throttle_idle (see throttleEx1Driver's SetSignedThrottleIdle).
 func toSignedThrottleRaw(value, idlePoint float64, axisRange int32) int32 {
-	if value > 1 {
-		value = 1
-	}
-	if value < -1 {
-		value = -1
-	}
-	var raw float64
-	if value >= 0 {
-		raw = idlePoint + value*(1-idlePoint)
-	} else {
-		raw = idlePoint + value*(idlePoint+1)
-	}
-	return int32(raw * float64(axisRange))
+	return int32(control.RemapIdle(value, idlePoint) * float64(axisRange))
 }

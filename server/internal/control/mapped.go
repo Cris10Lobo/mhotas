@@ -77,6 +77,12 @@ func (m *MappedOutput) SetSignedThrottle(signed bool) {
 	}
 }
 
+func (m *MappedOutput) SetThrottleInvert(invert bool) {
+	if d, ok := m.axes[AxisThrottle].(SignedThrottleSetter); ok {
+		d.SetThrottleInvert(invert)
+	}
+}
+
 func (m *MappedOutput) SetSignedThrottleIdle(idle float64) {
 	if d, ok := m.axes[AxisThrottle].(SignedThrottleSetter); ok {
 		d.SetSignedThrottleIdle(idle)

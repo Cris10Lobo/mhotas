@@ -100,6 +100,11 @@ func TestTelemetryRoundTrip(t *testing.T) {
 		StallWarning:       true,
 		OnGround:           true,
 		GroundSpeedKnots:   12.5,
+		SpoilersHandle:     0.75,
+		SpoilersArmed:      true,
+		ElevatorTrim:       -0.25,
+		AutopilotMaster:    true,
+		AutothrottleActive: true,
 	}
 	buf := EncodeTelemetry(3, want)
 	got, err := DecodeTelemetry(buf)

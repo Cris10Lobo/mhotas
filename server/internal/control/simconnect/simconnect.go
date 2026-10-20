@@ -71,6 +71,10 @@ func (b *Backend) SetSignedThrottle(signed bool) {
 	b.out.SetSignedThrottle(signed)
 }
 
+func (b *Backend) SetThrottleInvert(invert bool) {
+	b.out.SetThrottleInvert(invert)
+}
+
 func (b *Backend) SetSignedThrottleIdle(idle float64) {
 	b.out.SetSignedThrottleIdle(idle)
 }

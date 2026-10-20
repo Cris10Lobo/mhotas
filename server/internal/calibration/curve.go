@@ -47,3 +47,36 @@ func (c Curve) Apply(value float64) float64 {
 
 	return sign * v
 }
+
+// Inverse returns the input that Apply maps to v — e.g. to show the sim's
+// actual lever position on a phone control whose values go through this
+// curve, so dragging from the shown position sends what produced it.
+// Every dead-zone input maps to 0, so 0 inverts to 0.
+func (c Curve) Inverse(v float64) float64 {
+	sign := 1.0
+	if v < 0 {
+		sign, v = -1, -v
+	}
+	v = min(v, 1)
+	if c.Expo > 0 {
+		// (1-e)x + e*x^3 is monotonic on [0,1]; bisect rather than solve
+		// the cubic.
+		lo, hi := 0.0, 1.0
+		for range 40 {
+			mid := (lo + hi) / 2
+			if (1-c.Expo)*mid+c.Expo*mid*mid*mid < v {
+				lo = mid
+			} else {
+				hi = mid
+			}
+		}
+		v = (lo + hi) / 2
+	}
+	if v > 0 && c.DeadZone < 1 {
+		v = c.DeadZone + v*(1-c.DeadZone)
+	}
+	if c.Invert {
+		sign = -sign
+	}
+	return sign * v
+}

@@ -13,38 +13,53 @@ import (
 	"mhotas/internal/control/logbackend"
 	"mhotas/internal/control/simconnect"
 	"mhotas/internal/control/vjoy"
+	"mhotas/internal/simlink"
 	"mhotas/internal/telemetry"
 )
 
-func newBackend(ctx context.Context, name string, log *slog.Logger, controls map[string]config.ControlMapping) (control.Output, error) {
-	switch name {
-	case "log":
-		return logbackend.New(log), nil
-	case "simconnect":
-		return simconnect.New(ctx, log, controls)
-	case "vjoy":
-		return vjoy.New()
+// newBackend also returns the telemetry starter for the SimConnect
+// connection it opened (nil for log).
+//
+// The two input modes are separate, with no fallback between them:
+// "simconnect" writes through SimConnect events; "vjoy" writes only to the
+// vJoy device and keeps a SimConnect connection purely to read telemetry.
+// If vJoy can't drive every control, startup fails with what to fix.
+func newBackend(ctx context.Context, name, input string, log *slog.Logger, cfg config.Config) (control.Output, startTelemetryFunc, error) {
+	switch {
+	case name == "log":
+		return logbackend.New(log), nil, nil
+	case name == "simconnect" && input == "vjoy":
+		client := simlink.Connect(ctx, log)
+		vj, err := vjoy.New(log, client)
+		if err != nil {
+			client.Close()
+			return nil, nil, err
+		}
+		return vj, telemetryStarter(ctx, client, vj, log), nil
+	case name == "simconnect":
+		sc, err := simconnect.New(ctx, log, cfg.Controls)
+		if err != nil {
+			return nil, nil, err
+		}
+		return sc, telemetryStarter(ctx, sc.SimlinkClient(), nil, log), nil
 	default:
-		return nil, fmt.Errorf("unknown backend %q (want log, simconnect, or vjoy)", name)
+		return nil, nil, fmt.Errorf("unknown backend %q (want log or simconnect)", name)
 	}
 }
 
-// startTelemetry starts pushing live flap/gear state to sink in the
-// background, if backend supports it (only simconnect does — one
-// SimConnect connection serves both the write and read paths).
-func startTelemetry(ctx context.Context, backend control.Output, sink telemetry.Sink, log *slog.Logger) {
-	sc, ok := backend.(*simconnect.Backend)
-	if !ok {
-		return
-	}
-	src, err := telemetry.NewSource(sc.SimlinkClient())
-	if err != nil {
-		log.Error("telemetry source init failed", "err", err)
-		return
-	}
-	go func() {
-		if err := src.Run(ctx, sink); err != nil && !errors.Is(err, context.Canceled) {
-			log.Error("telemetry source stopped", "err", err)
+// telemetryStarter streams sim state to the phone and, if syncer is
+// non-nil, feeds it the sim's throttle (vJoy, which holds its last value).
+func telemetryStarter(ctx context.Context, client *simlink.Client, syncer control.ThrottleSyncer, log *slog.Logger) startTelemetryFunc {
+	return func(sink telemetry.Sink) {
+		src, err := telemetry.NewSource(client, syncer)
+		if err != nil {
+			log.Error("telemetry source init failed", "err", err)
+			return
 		}
-	}()
+		go func() {
+			if err := src.Run(ctx, sink); err != nil && !errors.Is(err, context.Canceled) {
+				log.Error("telemetry source stopped", "err", err)
+			}
+		}()
+	}
 }

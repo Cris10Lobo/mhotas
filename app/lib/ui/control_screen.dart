@@ -63,17 +63,6 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
   Timer? _sendTimer;
   int _buttonEventId = 0;
 
-  // No spoilersArmed TELEMETRY field exists yet (that would be a protocol
-  // change, out of scope for this milestone), so — unlike the pause/parking
-  // brake buttons — there's nothing to read the real state back from; this
-  // button just remembers its own last-toggled state, same as the server's
-  // Backend.spoilerArmed.
-  //
-  // ponytail: this and the server's copy can drift (restart either side, or
-  // drop all 3 redundant BUTTON packets) with nothing to reconcile them —
-  // add a spoilersArmed TELEMETRY field if that turns out to matter live.
-  bool _speedbrakeArmed = false;
-
   // Sustained haptics (stall shaker, taxi rumble): started/stopped only on
   // an actual state change, not re-triggered every TELEMETRY packet — see
   // _updateStallShaker/_updateTaxiRumble.
@@ -156,10 +145,7 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
     }
   }
 
-  void _toggleSpeedbrakeArm() {
-    setState(() => _speedbrakeArmed = !_speedbrakeArmed);
-    _tapButton(ButtonIds.spoilerArm);
-  }
+  void _toggleSpeedbrakeArm() => _tapButton(ButtonIds.spoilerArm);
 
   // Stall warning stick-shaker: buzzes continuously while telemetry reports
   // STALL WARNING active, stops the instant it clears. Built-in
@@ -377,11 +363,14 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
                                 _BigButton(
                                   label: 'ARM',
                                   onTap: _toggleSpeedbrakeArm,
-                                  active: _speedbrakeArmed,
+                                  active: telemetry?.spoilersArmed ?? false,
                                   compact: true,
                                 ),
                                 const SizedBox(height: 8),
-                                _SpeedbrakeLever(onStep: _stepSpeedbrake),
+                                _SpeedbrakeLever(
+                                  onStep: _stepSpeedbrake,
+                                  synced: telemetry?.spoilersHandle,
+                                ),
                               ],
                             ),
                           ),
@@ -445,6 +434,7 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
                           child: _ControlLabel(
                             label: 'AP DISC',
                             child: _AutopilotDisconnectButton(
+                              engaged: telemetry?.autopilotMaster ?? false,
                               onTap: () =>
                                   _tapButton(ButtonIds.autopilotDisconnect),
                             ),
@@ -458,6 +448,7 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
                           child: _ControlLabel(
                             label: 'TRIM',
                             child: _TrimRocker(
+                              trim: telemetry?.elevatorTrim,
                               onUp: () => _tapButton(ButtonIds.trimUp),
                               onDown: () => _tapButton(ButtonIds.trimDown),
                             ),
@@ -471,6 +462,8 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
                           child: nudgeThrottle
                               ? _ThrottleNudgeControl(
                                   throttlePercent: telemetry?.throttlePercent,
+                                  autothrottle:
+                                      telemetry?.autothrottleActive ?? false,
                                   onIncr: () =>
                                       _tapButton(ButtonIds.throttleIncr),
                                   onDecr: () =>
@@ -483,6 +476,8 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
                                       .read(sliderAxisProvider.notifier)
                                       .setThrottle(v),
                                   synced: telemetry?.throttlePercent,
+                                  autothrottle:
+                                      telemetry?.autothrottleActive ?? false,
                                 ),
                         ),
                       ),
@@ -897,15 +892,15 @@ class _ParkingBrakeButton extends StatelessWidget {
 /// simlink.Client.DisconnectAutopilot). Always red (scheme.error), not just
 /// on press like _ToeBrake — requested directly, and matches real cockpit
 /// convention for a disconnect/warning control: it should read as
-/// "important" at a glance, not just while you're touching it. No
-/// telemetry field exists for AP-engaged state (same gap as the speedbrake
-/// arm toggle), so this is a plain one-shot action button, not a stateful
-/// toggle — Material's own FilledButton press feedback is all the
-/// affordance a momentary action needs.
+/// "important" at a glance, not just while you're touching it. [engaged]
+/// (AUTOPILOT MASTER from TELEMETRY) dims it while the AP is already off,
+/// so the pilot can see at a glance whether there's anything to disconnect.
 class _AutopilotDisconnectButton extends StatelessWidget {
-  const _AutopilotDisconnectButton({required this.onTap});
+  const _AutopilotDisconnectButton(
+      {required this.onTap, required this.engaged});
 
   final VoidCallback onTap;
+  final bool engaged;
 
   @override
   Widget build(BuildContext context) {
@@ -916,7 +911,8 @@ class _AutopilotDisconnectButton extends StatelessWidget {
       child: FilledButton(
         onPressed: onTap,
         style: FilledButton.styleFrom(
-          backgroundColor: scheme.error,
+          backgroundColor:
+              engaged ? scheme.error : scheme.error.withValues(alpha: 0.35),
           foregroundColor: scheme.onError,
           shape: const CircleBorder(),
           padding: EdgeInsets.zero,
@@ -1078,10 +1074,15 @@ class _HorizonPainter extends CustomPainter {
 /// change shows up here, and the next drag starts from where the throttle
 /// really is instead of wherever this widget was last left.
 class _ThrottleLever extends StatefulWidget {
-  const _ThrottleLever({required this.onChanged, this.synced});
+  const _ThrottleLever(
+      {required this.onChanged, this.synced, this.autothrottle = false});
 
   final ValueChanged<double> onChanged;
   final double? synced;
+
+  /// The sim's autothrottle is driving the lever — swaps the THR caption
+  /// for an A/T badge.
+  final bool autothrottle;
 
   @override
   State<_ThrottleLever> createState() => _ThrottleLeverState();
@@ -1120,18 +1121,18 @@ class _ThrottleLeverState extends State<_ThrottleLever>
   bool _dragging = false;
   late final AnimationController _anim;
 
-  // Timestamp of the last time this widget actively commanded a value
-  // (drag or the notify-driven idle spring-back). SimConnect only reports
-  // throttle position at ~1Hz, so right after we command a new value —
-  // e.g. releasing in the reverse zone, which should snap straight to idle
-  // — the last known `synced` reading is still the *pre-release* value for
-  // up to a second. Without this guard, the very next rebuild's
-  // didUpdateWidget would see that stale synced value, decide the lever
-  // needs to "catch up", and drag it right back into reverse — which is
-  // why releasing used to require overshooting into positive first to
-  // eventually win the race. Comfortably longer than the telemetry period.
+  // After this widget commands a value (drag or the notify-driven idle
+  // spring-back), the phone owns the throttle: `synced` is ignored until
+  // the sim's lever has stopped moving. Many aircraft slew the lever toward
+  // a new input at a limited rate, so for a while `synced` is a mid-travel
+  // value — following it would drag the knob backwards after release (and
+  // e.g. pull a reverse-zone release back into reverse). A sim-only change
+  // with no recent local command is still followed live.
+  bool _awaitingSim = false;
   DateTime _lastLocalCommandAt = DateTime.fromMillisecondsSinceEpoch(0);
-  static const _localCommandGrace = Duration(milliseconds: 1200);
+  double? _lastSynced;
+  DateTime _syncedMovedAt = DateTime.fromMillisecondsSinceEpoch(0);
+  static const _simSettleTime = Duration(milliseconds: 500);
 
   @override
   void initState() {
@@ -1146,6 +1147,7 @@ class _ThrottleLeverState extends State<_ThrottleLever>
 
   void _notifyChanged() {
     _lastLocalCommandAt = DateTime.now();
+    _awaitingSim = true;
     widget.onChanged(_value);
   }
 
@@ -1162,20 +1164,27 @@ class _ThrottleLeverState extends State<_ThrottleLever>
   void didUpdateWidget(covariant _ThrottleLever oldWidget) {
     super.didUpdateWidget(oldWidget);
     final synced = widget.synced;
-    final recentlyCommanded =
-        DateTime.now().difference(_lastLocalCommandAt) < _localCommandGrace;
+    final now = DateTime.now();
+    if (synced != null &&
+        (_lastSynced == null || (synced - _lastSynced!).abs() > 0.005)) {
+      _syncedMovedAt = now;
+    }
+    _lastSynced = synced;
+    if (_awaitingSim) {
+      final quietSince = _syncedMovedAt.isAfter(_lastLocalCommandAt)
+          ? _syncedMovedAt
+          : _lastLocalCommandAt;
+      if (now.difference(quietSince) < _simSettleTime) return;
+      _awaitingSim = false;
+    }
     // Ease toward a new synced reading instead of snapping instantly —
-    // telemetry only arrives ~1x/sec, so an instant jump reads as a visible
-    // stutter; animating over most of that interval reads as smooth
-    // tracking instead. Compares against _animTo (the in-flight target),
+    // telemetry arrives at up to ~20Hz, so a short ease over roughly two
+    // packets reads as smooth tracking instead of stepping. Compares against _animTo (the in-flight target),
     // not _value, so repeated rebuilds with the same synced reading don't
     // keep restarting the animation from scratch.
-    if (!_dragging &&
-        !recentlyCommanded &&
-        synced != null &&
-        synced != _animTo) {
+    if (!_dragging && synced != null && synced != _animTo) {
       _animateTo(synced,
-          notify: false, duration: const Duration(milliseconds: 700));
+          notify: false, duration: const Duration(milliseconds: 100));
     }
   }
 
@@ -1266,9 +1275,24 @@ class _ThrottleLeverState extends State<_ThrottleLever>
               child: Stack(
                 alignment: Alignment.center,
                 children: [
-                  const Positioned(
-                      top: 6,
-                      child: Text('THR', style: TextStyle(fontSize: 11))),
+                  Positioned(
+                    top: 6,
+                    child: widget.autothrottle
+                        ? Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 4, vertical: 1),
+                            decoration: BoxDecoration(
+                              color: scheme.tertiary,
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Text('A/T',
+                                style: TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.bold,
+                                    color: scheme.onTertiary)),
+                          )
+                        : const Text('THR', style: TextStyle(fontSize: 11)),
+                  ),
                   // Idle-line marker, at _idleY rather than dead center —
                   // the 80/20 split means idle no longer sits halfway down.
                   Align(
@@ -1333,13 +1357,13 @@ class _FlapLeverState extends State<_FlapLever> {
   double _dragFraction = 0; // 0 (up/retracted) .. 1 (down/full flaps)
   int? _pendingDetent;
 
-  // Same rationale as _ThrottleLever._localCommandGrace: telemetry only
-  // arrives ~1x/sec, so right after a tap the last known `synced` reading
-  // is still the pre-tap value for up to a second — without this guard the
-  // lever would visually snap back to the old detent and then jump forward
-  // once telemetry catches up.
+  // Same rationale as _ThrottleLever._awaitingSim: right after a tap
+  // the last known `synced` reading is still the pre-tap value for a round
+  // trip — without this guard the lever would visually snap back to the old
+  // detent and then jump forward once telemetry catches up. Longer than the
+  // throttle's because a multi-detent move is several sequential taps.
   DateTime _lastLocalCommandAt = DateTime.fromMillisecondsSinceEpoch(0);
-  static const _localCommandGrace = Duration(milliseconds: 1200);
+  static const _localCommandGrace = Duration(milliseconds: 500);
 
   int get _max => widget.max ?? 0;
 
@@ -1672,17 +1696,17 @@ class _BigButton extends StatelessWidget {
 /// of an absolute value. Up = more deployed, matching the throttle lever's
 /// up-is-more convention.
 ///
-/// Unlike the throttle lever, there is no TELEMETRY field for spoiler
-/// handle position (adding one would be a protocol change, out of scope
-/// for this milestone), so this widget's position is purely local — it
-/// can't mirror an in-sim spoiler change the way the throttle lever mirrors
-/// throttlePercent.
+/// [synced] is the sim's SPOILERS HANDLE POSITION (0..1, TELEMETRY): while
+/// not dragging, the knob sits at the nearest detent to it, so an in-sim
+/// spoiler change shows up here and the next drag steps from the real
+/// position.
 class _SpeedbrakeLever extends StatefulWidget {
-  const _SpeedbrakeLever({required this.onStep});
+  const _SpeedbrakeLever({required this.onStep, this.synced});
 
   /// Called with the number of detents moved: positive for SPOILERS_INC
   /// taps, negative for SPOILERS_DEC taps.
   final ValueChanged<int> onStep;
+  final double? synced;
 
   @override
   State<_SpeedbrakeLever> createState() => _SpeedbrakeLeverState();
@@ -1695,8 +1719,22 @@ class _SpeedbrakeLeverState extends State<_SpeedbrakeLever> {
 
   double _dragValue = 0; // fractional position while dragging, 0.._detentMax
   int _detent = 0;
+  bool _dragging = false;
+
+  @override
+  void didUpdateWidget(covariant _SpeedbrakeLever oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final synced = widget.synced;
+    if (_dragging || synced == null) return;
+    final detent = (synced * _detentMax).round().clamp(0, _detentMax);
+    if (detent != _detent) {
+      _detent = detent;
+      _dragValue = detent.toDouble();
+    }
+  }
 
   void _onDragStart(DragStartDetails details) {
+    _dragging = true;
     _dragValue = _detent.toDouble();
   }
 
@@ -1713,6 +1751,7 @@ class _SpeedbrakeLeverState extends State<_SpeedbrakeLever> {
   }
 
   void _onDragEnd(DragEndDetails details) {
+    _dragging = false;
     setState(() => _dragValue = _detent.toDouble()); // snap knob to the detent
   }
 
@@ -1889,18 +1928,26 @@ class _RepeatButtonState extends State<_RepeatButton> {
 /// exactly the sim event's own documented behavior ("holding down the key
 /// will cause the trim to increment faster over time").
 class _TrimRocker extends StatelessWidget {
-  const _TrimRocker({required this.onUp, required this.onDown});
+  const _TrimRocker({required this.onUp, required this.onDown, this.trim});
 
   final VoidCallback onUp;
   final VoidCallback onDown;
 
+  /// The sim's ELEVATOR TRIM PCT (-1..1, TELEMETRY), shown between the
+  /// buttons so trim changed in the sim (or by the AP) is visible here too.
+  final double? trim;
+
   @override
   Widget build(BuildContext context) {
+    final t = trim;
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
         _RepeatButton(label: '▲', onStep: onUp),
-        const SizedBox(height: 8),
+        const SizedBox(height: 4),
+        Text(t == null ? '--' : '${(t * 100).round()}%',
+            style: const TextStyle(fontSize: 11)),
+        const SizedBox(height: 4),
         _RepeatButton(label: '▼', onStep: onDown),
       ],
     );
@@ -1926,12 +1973,14 @@ class _TrimRocker extends StatelessWidget {
 class _ThrottleNudgeControl extends StatelessWidget {
   const _ThrottleNudgeControl({
     required this.throttlePercent,
+    this.autothrottle = false,
     required this.onIncr,
     required this.onDecr,
     required this.onReverseArmChanged,
   });
 
   final double? throttlePercent;
+  final bool autothrottle;
   final VoidCallback onIncr;
   final VoidCallback onDecr;
   final ValueChanged<bool> onReverseArmChanged;
@@ -1942,7 +1991,8 @@ class _ThrottleNudgeControl extends StatelessWidget {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Text(pct < 0 ? 'REV' : '${(pct.clamp(0.0, 1.0) * 100).round()}%'),
+        Text((autothrottle ? 'A/T ' : '') +
+            (pct < 0 ? 'REV' : '${(pct.clamp(0.0, 1.0) * 100).round()}%')),
         const SizedBox(height: 8),
         _RepeatButton(label: '+', onStep: onIncr),
         const SizedBox(height: 8),

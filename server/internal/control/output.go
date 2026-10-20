@@ -83,6 +83,16 @@ var buttonNames = map[string]ButtonID{
 	"throttle_reverse_arm": ButtonThrottleReverseArm,
 }
 
+// String returns the button's config name, e.g. "gear".
+func (b ButtonID) String() string {
+	for name, id := range buttonNames {
+		if id == b {
+			return name
+		}
+	}
+	return fmt.Sprintf("button(%d)", uint8(b))
+}
+
 // AxisByName resolves a config "controls" key to an AxisID, false if it
 // isn't a recognized axis name.
 func AxisByName(name string) (AxisID, bool) {
@@ -127,6 +137,15 @@ type Output interface {
 	Close() error
 }
 
+// ThrottleSyncer is implemented by a backend whose throttle input holds its
+// last written value (vJoy), so it can be moved to match the sim's actual
+// lever after the sim changed it some other way. Fed by telemetry through
+// transport.Server, which applies the throttle calibration first — value
+// is in the same units SetAxis receives.
+type ThrottleSyncer interface {
+	SyncThrottle(value float64, autothrottle bool)
+}
+
 // SignedThrottleSetter is implemented by a backend whose throttle driver can
 // switch, live, between the two reverse-thrust conventions SimConnect's
 // THROTTLE_AXIS_SET_EX1 actually has: the default arm-toggle-then-positive-
@@ -137,7 +156,16 @@ type Output interface {
 // only thing that actually knows. Optional — transport type-asserts for it
 // rather than requiring it on Output, so a backend with nothing throttle-
 // specific to switch (logbackend, vjoy) needs no stub.
+//
+// SetThrottleInvert reverses the throttle's final output, after the idle
+// remap — like ticking "reverse axis" in MSFS. Only meaningful for a
+// backend that goes through an MSFS axis binding (vJoy); SimConnect
+// ignores it. Inverting the input before
+// the remap instead (what calibration.Curve's Invert does for other axes)
+// swaps the forward and reverse zones around idle, so with idle anywhere
+// but center, phone idle lands far up the forward range.
 type SignedThrottleSetter interface {
 	SetSignedThrottle(signed bool)
 	SetSignedThrottleIdle(idle float64)
+	SetThrottleInvert(invert bool)
 }

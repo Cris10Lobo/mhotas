@@ -37,7 +37,7 @@ func TestToTelemetryHapticFields(t *testing.T) {
 
 func TestPercentToUnit(t *testing.T) {
 	cases := []struct {
-		pct  int32
+		pct  float32
 		want float32
 	}{
 		{pct: 0, want: 0},
@@ -50,6 +50,24 @@ func TestPercentToUnit(t *testing.T) {
 	for _, c := range cases {
 		if got := percentToUnit(c.pct); got != c.want {
 			t.Errorf("percentToUnit(%v) = %v, want %v", c.pct, got, c.want)
+		}
+	}
+}
+
+func TestAutothrottleActive(t *testing.T) {
+	cases := []struct {
+		r    rawState
+		want bool
+	}{
+		{rawState{AutothrottleArmed: 1}, false}, // armed, pilot on manual thrust
+		{rawState{AutothrottleArmed: 1, AirspeedHold: 1}, true},
+		{rawState{AutothrottleArmed: 1, MachHold: 1}, true},
+		{rawState{AirspeedHold: 1}, false}, // speed mode without A/T: pitch-on-speed
+		{rawState{ManagedThrottleActive: 1}, true},
+	}
+	for _, c := range cases {
+		if got := autothrottleActive(c.r); got != c.want {
+			t.Errorf("autothrottleActive(%+v) = %v, want %v", c.r, got, c.want)
 		}
 	}
 }

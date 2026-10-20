@@ -41,6 +41,7 @@ type Model struct {
 	tail    *LogTail
 
 	banner string // rendered once at startup, static for the process lifetime
+	input  string // input path readout, also fixed at startup
 
 	connectAddr string
 	altAddrs    []string // fallback candidates if connectAddr turns out unreachable
@@ -59,7 +60,7 @@ type Model struct {
 }
 
 func New(srv *transport.Server, backend control.Output, tail *LogTail) Model {
-	m := Model{srv: srv, backend: backend, tail: tail}
+	m := Model{srv: srv, backend: backend, tail: tail, input: inputLabel(backend)}
 
 	// Non-fatal if this fails (a font-data bug, say) — the dashboard's job
 	// is showing sim/device status, not the banner; fall back to plain
@@ -171,7 +172,7 @@ func (m Model) topBlock() string {
 
 	status := m.srv.Status()
 	ready := m.backend.Ready()
-	textBlock := "Backend:  " + m.backend.Name() + "\n" +
+	textBlock := "Input:    " + m.input + "\n" +
 		"Sim:      " + simLabel(ready) + "\n" +
 		"Phone:    " + phoneLabel(status)
 
@@ -260,6 +261,16 @@ func dot(ok bool) string {
 		return okStyle.Render("●")
 	}
 	return waitStyle.Render("○")
+}
+
+func inputLabel(backend control.Output) string {
+	switch backend.Name() {
+	case "vjoy":
+		return "vJoy"
+	case "simconnect":
+		return "SimConnect"
+	}
+	return backend.Name()
 }
 
 func simLabel(ready bool) string {

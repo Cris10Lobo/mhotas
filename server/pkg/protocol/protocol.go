@@ -13,7 +13,7 @@ import (
 // Version is the current protocol version. A HELLO carrying a different
 // version should be rejected with HelloVersionMismatch rather than silently
 // accepted.
-const Version uint8 = 7
+const Version uint8 = 8
 
 // PacketType identifies the payload that follows the 4-byte Header.
 type PacketType uint8
@@ -262,15 +262,18 @@ const (
 	GearTransit GearPosition = 2
 )
 
-const TelemetryPacketSize = HeaderSize + 14
+const TelemetryPacketSize = HeaderSize + 22
 
 // telemetryFlagStallWarning and telemetryFlagOnGround are the bits packed
 // into Telemetry's wire byte 13 (formerly a plain "reserved, must be 0"
-// byte — see docs/protocol.md). Bits 2-7 stay unused headroom for further
+// byte — see docs/protocol.md). Bits 5-7 stay unused headroom for further
 // booleans.
 const (
-	telemetryFlagStallWarning = 1 << 0
-	telemetryFlagOnGround     = 1 << 1
+	telemetryFlagStallWarning       = 1 << 0
+	telemetryFlagOnGround           = 1 << 1
+	telemetryFlagSpoilersArmed      = 1 << 2
+	telemetryFlagAutopilotMaster    = 1 << 3
+	telemetryFlagAutothrottleActive = 1 << 4
 )
 
 // Telemetry carries live aircraft state read from SimConnect, pushed
@@ -305,6 +308,16 @@ type Telemetry struct {
 	// GroundSpeedKnots is GROUND VELOCITY, knots — drives the taxi/ground-
 	// roll rumble's pulse rate.
 	GroundSpeedKnots float32
+	// SpoilersHandle is SPOILERS HANDLE POSITION, 0..1.
+	SpoilersHandle float32
+	SpoilersArmed  bool
+	// ElevatorTrim is ELEVATOR TRIM PCT, -1..1.
+	ElevatorTrim    float32
+	AutopilotMaster bool
+	// AutothrottleActive is set when the sim's autothrottle is driving the
+	// throttle — the phone shows an A/T badge, and the vJoy backend stops
+	// resyncing its throttle axis so it doesn't fight it.
+	AutothrottleActive bool
 }
 
 func EncodeTelemetry(seq uint16, t Telemetry) []byte {
@@ -323,8 +336,19 @@ func EncodeTelemetry(seq uint16, t Telemetry) []byte {
 	if t.OnGround {
 		flags |= telemetryFlagOnGround
 	}
+	if t.SpoilersArmed {
+		flags |= telemetryFlagSpoilersArmed
+	}
+	if t.AutopilotMaster {
+		flags |= telemetryFlagAutopilotMaster
+	}
+	if t.AutothrottleActive {
+		flags |= telemetryFlagAutothrottleActive
+	}
 	buf[13] = flags
 	binary.LittleEndian.PutUint32(buf[14:18], math.Float32bits(t.GroundSpeedKnots))
+	binary.LittleEndian.PutUint32(buf[18:22], math.Float32bits(t.SpoilersHandle))
+	binary.LittleEndian.PutUint32(buf[22:26], math.Float32bits(t.ElevatorTrim))
 	return buf
 }
 
@@ -343,6 +367,11 @@ func DecodeTelemetry(b []byte) (Telemetry, error) {
 		StallWarning:       flags&telemetryFlagStallWarning != 0,
 		OnGround:           flags&telemetryFlagOnGround != 0,
 		GroundSpeedKnots:   math.Float32frombits(binary.LittleEndian.Uint32(b[14:18])),
+		SpoilersHandle:     math.Float32frombits(binary.LittleEndian.Uint32(b[18:22])),
+		SpoilersArmed:      flags&telemetryFlagSpoilersArmed != 0,
+		ElevatorTrim:       math.Float32frombits(binary.LittleEndian.Uint32(b[22:26])),
+		AutopilotMaster:    flags&telemetryFlagAutopilotMaster != 0,
+		AutothrottleActive: flags&telemetryFlagAutothrottleActive != 0,
 	}, nil
 }
 

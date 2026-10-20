@@ -17,7 +17,7 @@ Every packet starts with a 4-byte header:
 | Offset | Size | Field           | Notes                                              |
 |--------|------|-----------------|-----------------------------------------------------|
 | 0      | 1    | `type`          | See packet type table below                        |
-| 1      | 1    | `version`       | Protocol version, currently `7`                     |
+| 1      | 1    | `version`       | Protocol version, currently `8`                     |
 | 2      | 2    | `seq`           | uint16, per-packet-type sequence number, wraps at 65535 |
 
 ## Packet types
@@ -29,7 +29,7 @@ Every packet starts with a 4-byte header:
 | 0x03 | `HELLO`      | phone → server   | once, on connect               |
 | 0x04 | `HELLO_ACK`  | server → phone   | once, in reply to `HELLO`      |
 | 0x05 | `HEARTBEAT`  | both directions  | ~1Hz                            |
-| 0x06 | `TELEMETRY`  | server → phone   | on-change or ~2-5Hz             |
+| 0x06 | `TELEMETRY`  | server → phone   | on change (max ~20Hz), else 1Hz |
 | 0x07 | `CONFIG`     | server → phone   | after HELLO_ACK, after CONFIG_SET, in reply to CONFIG_GET |
 | 0x08 | `CONFIG_SET` | phone → server   | on a calibration edit           |
 | 0x09 | `CONFIG_GET` | phone → server   | on settings screen open         |
@@ -84,7 +84,7 @@ No payload. Either side sends this roughly once per second while a session is ac
 liveness/UI state ("connected" vs "connection lost") and to drive the server's failsafe timer — it is
 not required for `AXIS`/`BUTTON` processing to function.
 
-### `TELEMETRY` (0x06) — 18 bytes total
+### `TELEMETRY` (0x06) — 26 bytes total
 
 | Offset | Size | Field                 | Notes                                                    |
 |--------|------|------------------------|-------------------------------------------------------------|
@@ -92,16 +92,23 @@ not required for `AXIS`/`BUTTON` processing to function.
 | 5      | 1    | `flapHandleIndexMax`   | int8, max flap handle index for the loaded aircraft         |
 | 6      | 1    | `gearPosition`         | uint8: 0 = up, 1 = down, 2 = in transit                     |
 | 7      | 1    | `parkingBrakeSet`      | uint8: 0/1, the sim's *actual* current parking brake state, independent of the phone's own button-tap history |
-| 8      | 4    | `throttlePercent`      | float32, -1..1, the sim's *actual* current throttle lever position (negative = reverse), independent of whatever the phone last commanded |
+| 8      | 4    | `throttlePercent`      | float32, -1..1, the sim's *actual* current throttle lever position (negative = reverse), independent of whatever the phone last commanded — mapped back through the throttle's dead zone/expo (`Curve.Inverse`), so it's the phone-lever position that produces it |
 | 12     | 1    | `paused`               | uint8: 0/1, the sim's *actual* current pause state, from SimConnect's own Pause system event, not a guess based on the phone's last PAUSE tap |
-| 13     | 1    | `flags`                | bitmask: bit0 = `stallWarning` (SimConnect `STALL WARNING`), bit1 = `onGround` (`SIM ON GROUND`), bits 2-7 unused. Was a plain "reserved, must be 0" byte through v6. |
+| 13     | 1    | `flags`                | bitmask: bit0 = `stallWarning` (SimConnect `STALL WARNING`), bit1 = `onGround` (`SIM ON GROUND`), bit2 = `spoilersArmed` (`SPOILERS ARMED`), bit3 = `autopilotMaster` (`AUTOPILOT MASTER`), bit4 = `autothrottleActive` (`AUTOPILOT MANAGED THROTTLE ACTIVE`, or `AUTOPILOT THROTTLE ARM` with `AUTOPILOT AIRSPEED HOLD`/`MACH HOLD` — armed alone doesn't count), bits 5-7 unused. Was a plain "reserved, must be 0" byte through v6. |
 | 14     | 4    | `groundSpeedKnots`     | float32, `GROUND VELOCITY` in knots — drives the taxi/ground-roll rumble haptic's pulse rate; meaningless while `onGround` is false |
+| 18     | 4    | `spoilersHandle`       | float32, 0..1, `SPOILERS HANDLE POSITION` — the speedbrake lever mirrors it |
+| 22     | 4    | `elevatorTrim`         | float32, -1..1, `ELEVATOR TRIM PCT` — shown on the trim rocker |
 
 These fields exist so the app can mirror the sim's real state rather than silently fighting a manual
 in-sim adjustment or guessing state locally — see "Bidirectional sync" below. A fixed struct rather than
 a generic key/value simvar schema. (v2-v5 carried 4 extra fields — airspeed/altitude/heading/vertical
 speed — for on-screen status tiles; removed in v6 along with the status tiles themselves. v7 adds
-`flags`/`groundSpeedKnots` for haptic feedback — stall-warning stick-shaker and taxi rumble.)
+`flags`/`groundSpeedKnots` for haptic feedback — stall-warning stick-shaker and taxi rumble. v8 adds
+`spoilersHandle`/`elevatorTrim` and flag bits 2-4 so every control with readable sim state mirrors it.)
+
+The server sends a packet whenever any field changed, at most every 50ms (SimConnect reports every
+changed sim frame), and re-sends unchanged state once a second so a phone that just (re)connected gets
+the full picture without waiting for something in the sim to change.
 
 ### `CONFIG` (0x07) — 76 bytes total
 
@@ -120,6 +127,11 @@ Four fixed-order 18-byte axis-calibration blocks, pitch/roll/throttle/rudder:
 | 9                       | 4    | `smoothing`          | float32, 0..1  |
 | 13                      | 1    | `signedThrottle`     | uint8: 0/1     |
 | 14                      | 4    | `signedThrottleIdle` | float32, -1..1 |
+
+On the `throttle` block, `invert` reverses the final axis output after the idle remap (like MSFS's own
+"reverse axis"), not the input value, and only applies to vJoy input (SimConnect events go through no
+MSFS axis binding to compensate for): inverting the input would swap the forward and reverse zones around
+`signedThrottleIdle`, putting phone idle far up the forward range whenever idle isn't at the center.
 
 `signedThrottle`/`signedThrottleIdle` only mean anything on the `throttle` block — see "Reverse-thrust
 convention" below. Carried on every axis anyway, to keep one shared block layout; a no-op on
@@ -191,9 +203,10 @@ overwritten by it:
 Not every control gets a `TELEMETRY` readback: pitch/roll/rudder have no on-screen "position" widget to
 mirror (tilt is physical, and the rudder stick is deliberately momentary — it always springs back to a
 fixed neutral, so there's no stale rest value to correct), so the axis dedup above is their complete
-treatment. Flap position was already read back before this work. The same pattern (read the
-simvar, add a `TELEMETRY` field, mirror it client-side) extends to further controls if a concrete need
-comes up later.
+treatment. Every other control mirrors its sim state: flaps, gear, parking brake, pause, throttle,
+spoiler handle and arm, elevator trim, autopilot master, and autothrottle (shown as an A/T badge on the
+throttle lever). Adding another follows the same pattern: read the simvar, add a `TELEMETRY` field,
+mirror it client-side.
 
 ## Failsafe policy (server-side)
 
