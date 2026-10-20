@@ -1,12 +1,13 @@
 .PHONY: server fake-phone
 
 # Cross-compiles the real mhotas-server against the real SimConnect backend
+# (input mode: TUI picker, or pass INPUT=vjoy|simconnect)
 # and runs it via WSL2's interop, which executes .exe files as real Windows
 # processes with real DLL access — no need to switch to a Windows shell.
 # Pair with `make fake-phone` in another terminal to exercise it without a
 # phone.
 server:
-	cd server/cmd/mhotas-server && GOOS=windows GOARCH=amd64 go build -o mhotas-server.exe . && ./mhotas-server.exe --backend=simconnect --config=../../config.json
+	cd server/cmd/mhotas-server && GOOS=windows GOARCH=amd64 go build -o mhotas-server.exe . && ./mhotas-server.exe --backend=simconnect --config=../../config.json $(if $(INPUT),--input=$(INPUT))
 
 # Cross-compiled to a real Windows .exe too, not `go run` — running it as a
 # plain WSL/Linux process would put it on a different network namespace

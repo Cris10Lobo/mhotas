@@ -9,8 +9,10 @@ phone for pitch/roll, on-screen sliders for throttle/rudder, and live aircraft s
 gear position) mirrored back to the screen via SimConnect. Unlike prior art (virtualHOTAS,
 Fly-By-Wireless, Virtual Yoke Lite), which all inject input through a generic vJoy virtual joystick with
 no read path, this project talks to MSFS2024 directly through SimConnect — giving both control fidelity
-and a live telemetry channel back to the phone. A vJoy backend is planned later for broader sim
-compatibility and as a fallback if direct SimConnect control proves unreliable.
+and a live telemetry channel back to the phone. Input defaults to a vJoy virtual joystick
+(`--input=vjoy`, bound in MSFS's own controls menu), with SimConnect events as the fallback
+(`--input=simconnect`, or automatically when vJoy is unavailable). Either way SimConnect stays connected
+and is the source of truth: every readable control state streams back so the phone mirrors the sim.
 
 Repo is three independent build units tied together by a hand-maintained wire protocol:
 
@@ -37,8 +39,8 @@ go run ./cmd/mhotas-server --backend=log      # dev/test backend, no MSFS needed
 go run ./cmd/mhotas-server --backend=simconnect --config path/to/config.json
 ```
 
-Several packages (`internal/control/simconnect`, `internal/control/vjoy`, `internal/telemetry`'s real
-source, `internal/simlink`) carry `//go:build windows` — they have **zero buildable files on
+Several packages (`internal/control/simconnect`, `internal/control/vjoy`, `internal/vjoylink`,
+`internal/telemetry`'s real source, `internal/simlink`) carry `//go:build windows` — they have **zero buildable files on
 non-Windows**, and are only exercised by cross-compiling:
 
 ```sh
@@ -110,11 +112,23 @@ failsafe policy (axes neutral/hold on a ~500ms AXIS timeout).
 ### `control.Output` is the seam between transport and simulator
 
 `server/internal/control/output.go` defines the interface (`SetAxis`, `SetButton`, `Close`) that lets
-`logbackend` (dev/test, no MSFS needed), `control/simconnect` (MVP, Windows-only), and `control/vjoy`
-(a later-phase addition, still stubbed) coexist without `transport` caring which is active.
-`cmd/mhotas-server`'s `--backend` flag selects one. Values
-reaching a backend are already dead-zone/curve/invert-shaped by `internal/calibration` — a backend's only
-job is final range conversion and the actual write.
+`logbackend` (dev/test, no MSFS needed), `control/simconnect` and `control/vjoy` (both Windows-only)
+coexist without `transport` caring which is active. Values reaching a backend are already dead-zone/
+curve/invert-shaped by `internal/calibration` — a backend's only job is final range conversion and the
+actual write.
+
+`--backend` picks `log` or `simconnect`. `simconnect` always opens the SimConnect connection (telemetry
+needs it); `--input` (or the TUI picker when the flag is absent) then decides where writes go. vJoy and
+SimConnect are separate, independent backends — neither knows about the other. `control.Router`
+(build-tag-free, tested) composes them: vJoy for everything, except controls the vJoy device lacks plus
+any listed in config's `simconnect_controls`, which go to SimConnect. If vJoy can't start at all,
+`cmd/mhotas-server/backend_windows.go` uses plain SimConnect instead. vJoy's mapping is fixed (pitch=Y,
+roll=X, throttle=Z, rudder=RZ, button N = `ButtonID` N) since the MSFS binding is where meaning is set.
+
+A vJoy axis holds its last value, so `control/vjoy` implements `control.ThrottleSyncer`: telemetry
+feeds it the sim's throttle and it moves the vJoy axis to match after an in-sim change — never while
+autothrottle is active, and only for a move away from where the sim settled after its own last write
+(see `control/vjoy/sync.go`; without that, a non-linear MSFS sensitivity curve would feedback-loop).
 
 ### Calibration is server-side except recentering
 
@@ -128,9 +142,10 @@ it's instant-feedback correction for how the user is currently holding the devic
 
 `internal/telemetry` (`Sink` interface with no build tag + a Windows-only `Source` in
 `source_windows.go`, backed by `internal/simlink`'s SimConnect data reads) is what makes this project
-different from vJoy-based prior art: SimConnect can be *read* as well as written, so flap position, gear
-position, throttle lever position, parking brake state, and pause state all stream back to the phone as
-TELEMETRY packets — see `docs/protocol.md`'s "Bidirectional sync" for why several of those exist (closing
+different from vJoy-based prior art: SimConnect can be *read* as well as written, so flap/gear/throttle/
+spoiler/trim position, parking brake, pause, autopilot and autothrottle state all stream back to the
+phone as TELEMETRY packets (on change, max ~20Hz, 1Hz keepalive). Telemetry is wired to the SimConnect
+connection itself, not to whichever input backend is active — see `docs/protocol.md`'s "Bidirectional sync" for why several of those exist (closing
 the loop so an in-sim change, not just a phone command, reaches the app instead of getting silently
 overwritten or misrepresented).
 

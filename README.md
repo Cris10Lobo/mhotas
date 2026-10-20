@@ -7,18 +7,61 @@ Turn a smartphone into a virtual flight control for Microsoft Flight Simulator 2
 like a stick for pitch/roll, use on-screen sliders for throttle/rudder, and see live aircraft state
 (flap position, gear position) mirrored back to the screen in real time.
 
-Unlike existing phone-as-joystick tools (which all inject input via a generic virtual joystick driver
-like vJoy, with no way to read anything back), mHOTAS talks to MSFS2024 directly via
+Existing phone-as-joystick tools inject input through a virtual joystick driver like vJoy, with no way to
+read anything back. mHOTAS also uses vJoy for input by default, but stays connected to MSFS2024 via
 [SimConnect](https://docs.flightsimulator.com/msfs2024/html/6_Programming_APIs/SimConnect/SimConnect_API_Reference.htm),
-giving it two advantages:
+which gives it two advantages:
 
-- **Control fidelity**: control axes are set via SimConnect's own client events, not a virtual HID device.
-- **Live telemetry**: SimConnect can also be *read from* — mHOTAS streams live simvars (starting with
-  flap handle index and gear position) back to the phone, so the app's on-screen indicators track the
+- **Input that always works**: vJoy works with any aircraft's standard bindings. If vJoy is unavailable,
+  or for any single control, input falls back to SimConnect's own client events.
+- **Live telemetry**: SimConnect can also be *read from* — mHOTAS streams live simvars (flaps, gear,
+  throttle, spoilers, trim, brakes, pause, autopilot, autothrottle) back to the phone, so the app's on-screen indicators track the
   simulator in real time.
 
-A vJoy-based backend is planned as a later addition, for broader sim compatibility beyond MSFS2024 and
-as a fallback if direct SimConnect axis control proves unreliable for some aircraft.
+## Input: vJoy (default) or SimConnect
+
+`--backend=simconnect` sends input through a [vJoy](https://github.com/BrunnerInnovation/vJoy) virtual
+joystick by default (`--input=vjoy`), while SimConnect stays connected to read the sim's state back —
+the sim is the source of truth, and the phone mirrors it. Without the `--input` flag the server's TUI
+asks at startup (Enter keeps vJoy). If vJoy isn't installed or the device can't be acquired, the server
+falls back to SimConnect events (`--input=simconnect`) and says so in the TUI.
+
+vJoy setup:
+
+1. Install vJoy, open **Configure vJoy**, and on device 1 enable axes **X, Y, Z, Rz** and **15 buttons**.
+2. In MSFS → Controls → vJoy Device, bind:
+
+   | vJoy | Control | MSFS binding |
+   |------|---------|--------------|
+   | Y | pitch | Elevator axis |
+   | X | roll | Ailerons axis |
+   | Z | throttle | Throttle axis (`-100 to 100%` if `signed_throttle` is on, else `0 to 100%`) |
+   | Rz | rudder | Rudder axis |
+   | 1 | gear | Toggle landing gear |
+   | 2 | parking_brake | Toggle parking brake |
+   | 3 | pause | Toggle pause |
+   | 4 / 5 | flap_incr / flap_decr | Increase / decrease flaps |
+   | 6 | toe_brake | Brakes (hold) |
+   | 7 / 8 | spoiler_incr / spoiler_decr | Increase / decrease spoilers |
+   | 9 | spoiler_arm | Toggle arm spoilers |
+   | 10 | autopilot_disconnect | Autopilot off |
+   | 11 / 12 | trim_up / trim_down | Elevator trim up / down |
+   | 13 / 14 | throttle_incr / throttle_decr | Increase / decrease throttle |
+   | 15 | throttle_reverse_arm | Reverse thrust (hold) |
+
+   The server also logs this table at startup. Pitch direction comes from the MSFS binding: if it's
+   backwards, tick "reverse axis" there.
+
+A control the vJoy device lacks (say Rz not enabled) falls back to SimConnect on its own. To keep one on
+SimConnect deliberately, e.g. when its vJoy binding doesn't work on some aircraft, list it in
+`server/config.json`:
+
+```json
+"simconnect_controls": ["rudder", "gear"]
+```
+
+While the sim's autothrottle is active, the throttle lever shows an **A/T** badge and the server stops
+moving the vJoy throttle to follow the sim, so it can't knock autothrottle off.
 
 ## Status
 
