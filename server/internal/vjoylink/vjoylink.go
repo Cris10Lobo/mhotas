@@ -49,7 +49,7 @@ func load() (map[string]*syscall.Proc, error) {
 	}
 	procs := map[string]*syscall.Proc{}
 	for _, name := range []string{
-		"vJoyEnabled", "GetVJDStatus", "AcquireVJD", "RelinquishVJD", "ResetVJD",
+		"vJoyEnabled", "GetVJDStatus", "AcquireVJD", "RelinquishVJD", "ResetButtons",
 		"GetVJDAxisMax", "GetVJDButtonNumber", "SetAxis", "SetBtn",
 	} {
 		p, err := dll.FindProc(name)
@@ -111,7 +111,10 @@ func Acquire(id uint32) error {
 
 func Relinquish(id uint32) { call("RelinquishVJD", uintptr(id)) }
 
-func Reset(id uint32) { call("ResetVJD", uintptr(id)) }
+// ReleaseButtons releases every button. Deliberately not ResetVJD: that
+// also recenters every axis, which MSFS would apply as a real input
+// (throttle jumping to mid-travel at server start).
+func ReleaseButtons(id uint32) { call("ResetButtons", uintptr(id)) }
 
 // AxisMax returns the axis's maximum raw value (its minimum is 0), and
 // false if the axis isn't enabled on the device. Used as the existence

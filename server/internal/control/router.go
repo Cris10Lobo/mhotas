@@ -77,6 +77,12 @@ func (r *Router) SetSignedThrottleIdle(idle float64) {
 	}
 }
 
+func (r *Router) SyncThrottle(sim float64, autothrottle bool) {
+	if s, ok := r.throttle().(ThrottleSyncer); ok {
+		s.SyncThrottle(sim, autothrottle)
+	}
+}
+
 func (r *Router) throttle() Output {
 	if r.axes[AxisThrottle] {
 		return r.fallback

@@ -6,6 +6,7 @@ import (
 	"context"
 	"time"
 
+	"mhotas/internal/control"
 	"mhotas/internal/simlink"
 	"mhotas/pkg/protocol"
 )
@@ -24,12 +25,16 @@ const keepaliveInterval = time.Second
 // pushes it to a Sink whenever it changes.
 type Source struct {
 	client *simlink.Client
+	syncer control.ThrottleSyncer
 }
 
 // NewSource wraps an already-connected simlink.Client — the same
 // connection control/simconnect.Backend writes through, not a second one.
-func NewSource(client *simlink.Client) (*Source, error) {
-	return &Source{client: client}, nil
+//
+// syncer, if non-nil, is fed every reading so an input backend that holds
+// its last value (vJoy) can follow the sim's throttle.
+func NewSource(client *simlink.Client, syncer control.ThrottleSyncer) (*Source, error) {
+	return &Source{client: client, syncer: syncer}, nil
 }
 
 // Run polls simlink's latest aircraft-state reading and calls
@@ -68,6 +73,9 @@ func (s *Source) Run(ctx context.Context, sink Sink) error {
 				ManagedThrottleActive:  as.ManagedThrottleActive,
 				Paused:                 s.client.Paused(),
 			})
+			if s.syncer != nil {
+				s.syncer.SyncThrottle(float64(t.ThrottlePercent), t.AutothrottleActive)
+			}
 			if have && t == last && time.Since(lastSent) < keepaliveInterval {
 				continue
 			}

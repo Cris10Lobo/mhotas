@@ -137,6 +137,13 @@ type Output interface {
 	Close() error
 }
 
+// ThrottleSyncer is implemented by a backend whose throttle input holds its
+// last written value (vJoy), so it can be moved to match the sim's actual
+// lever after the sim changed it some other way. Fed by telemetry.
+type ThrottleSyncer interface {
+	SyncThrottle(sim float64, autothrottle bool)
+}
+
 // SignedThrottleSetter is implemented by a backend whose throttle driver can
 // switch, live, between the two reverse-thrust conventions SimConnect's
 // THROTTLE_AXIS_SET_EX1 actually has: the default arm-toggle-then-positive-

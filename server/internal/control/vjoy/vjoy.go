@@ -14,7 +14,9 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"sync"
 	"sync/atomic"
+	"time"
 
 	"mhotas/internal/control"
 	"mhotas/internal/vjoylink"
@@ -44,6 +46,9 @@ type Backend struct {
 	buttons     int
 	signed      atomic.Bool
 	reverseHeld atomic.Bool
+
+	throttleMu sync.Mutex // serializes phone writes with telemetry resyncs
+	sync       throttleSync
 }
 
 // New acquires vJoy device 1. It fails only if vJoy itself is unusable
@@ -57,7 +62,7 @@ func New(log *slog.Logger) (b *Backend, unsupported []string, err error) {
 	if err := vjoylink.Acquire(deviceID); err != nil {
 		return nil, nil, fmt.Errorf("vjoy: %w", err)
 	}
-	vjoylink.Reset(deviceID) // clear stale state from a previous crashed session
+	vjoylink.ReleaseButtons(deviceID) // a previous crashed session may have left one held
 
 	b = &Backend{axes: map[control.AxisID]axis{}, buttons: vjoylink.ButtonCount(deviceID)}
 	for id, usage := range axisUsage {
@@ -89,11 +94,30 @@ func (b *Backend) SetAxis(id control.AxisID, value float64) error {
 	if id != control.AxisThrottle {
 		return vjoylink.SetAxis(deviceID, a.usage, toRaw(value, a.max))
 	}
+	b.throttleMu.Lock()
+	defer b.throttleMu.Unlock()
+	b.sync.wrote(time.Now())
 	signed := b.signed.Load()
 	if !signed {
 		b.holdReverse(value < 0)
 	}
 	return vjoylink.SetAxis(deviceID, a.usage, throttleToRaw(value, signed, a.max))
+}
+
+// SyncThrottle implements control.ThrottleSyncer: moves the vJoy throttle
+// to the sim's actual lever position when the sim changed it some other
+// way — see throttleSync. MSFS receives the value it already has, so
+// nothing moves in the sim. The reverse button isn't touched.
+func (b *Backend) SyncThrottle(sim float64, autothrottle bool) {
+	a, ok := b.axes[control.AxisThrottle]
+	if !ok {
+		return
+	}
+	b.throttleMu.Lock()
+	defer b.throttleMu.Unlock()
+	if b.sync.shouldSync(sim, autothrottle, time.Now()) {
+		vjoylink.SetAxis(deviceID, a.usage, throttleToRaw(sim, b.signed.Load(), a.max))
+	}
 }
 
 // holdReverse presses the reverse button while the lever is in the reverse
@@ -122,7 +146,7 @@ func (b *Backend) SetButton(id control.ButtonID, pressed bool) error {
 func (b *Backend) Ready() bool { return true }
 
 func (b *Backend) Close() error {
-	vjoylink.Reset(deviceID)
+	vjoylink.ReleaseButtons(deviceID)
 	vjoylink.Relinquish(deviceID)
 	return nil
 }
