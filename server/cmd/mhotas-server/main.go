@@ -36,7 +36,7 @@ func run() error {
 	var (
 		backendName = flag.String("backend", "log", "control output backend: log, simconnect")
 		configPath  = flag.String("config", "", "path to a JSON config file (optional; defaults are used if omitted)")
-		inputMode   = flag.String("input", "", "simconnect backend's input path: vjoy (default; falls back to simconnect if vJoy is unavailable) or simconnect")
+		inputMode   = flag.String("input", "", "simconnect backend's input path: vjoy (default; SimConnect only reads telemetry) or simconnect")
 		uiMode      = flag.String("ui", "auto", "display mode: auto, tui, plain (auto = tui when stdout is a terminal)")
 	)
 	flag.Parse()
@@ -108,7 +108,7 @@ func run() error {
 	serverErr := make(chan error, 1)
 	go func() { serverErr <- srv.Run(ctx) }()
 
-	p := tea.NewProgram(tui.New(srv, backend, input, tail), tea.WithAltScreen())
+	p := tea.NewProgram(tui.New(srv, backend, tail), tea.WithAltScreen())
 	// A signal (Ctrl+C at the OS level, not the TUI's own 'q'/ctrl+c key
 	// handling) cancels ctx directly — make sure that also tears down the
 	// TUI instead of leaving it on screen after the server's already gone.

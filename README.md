@@ -12,8 +12,8 @@ read anything back. mHOTAS also uses vJoy for input by default, but stays connec
 [SimConnect](https://docs.flightsimulator.com/msfs2024/html/6_Programming_APIs/SimConnect/SimConnect_API_Reference.htm),
 which gives it two advantages:
 
-- **Input that always works**: vJoy works with any aircraft's standard bindings. If vJoy is unavailable,
-  or for any single control, input falls back to SimConnect's own client events.
+- **Two input paths**: vJoy (default) works through any aircraft's standard MSFS bindings; SimConnect's
+  own client events are the alternative. You pick one; they never mix.
 - **Live telemetry**: SimConnect can also be *read from* — mHOTAS streams live simvars (flaps, gear,
   throttle, spoilers, trim, brakes, pause, autopilot, autothrottle) back to the phone, so the app's on-screen indicators track the
   simulator in real time.
@@ -23,8 +23,10 @@ which gives it two advantages:
 `--backend=simconnect` sends input through a [vJoy](https://github.com/BrunnerInnovation/vJoy) virtual
 joystick by default (`--input=vjoy`), while SimConnect stays connected to read the sim's state back —
 the sim is the source of truth, and the phone mirrors it. Without the `--input` flag the server's TUI
-asks at startup (Enter keeps vJoy). If vJoy isn't installed or the device can't be acquired, the server
-falls back to SimConnect events (`--input=simconnect`) and says so in the TUI.
+asks at startup (Enter keeps vJoy). The two modes are separate: in vJoy mode every control goes through
+vJoy and SimConnect only reads telemetry, and if vJoy isn't installed or the device lacks an axis or
+button, the server stops with what to fix — it never quietly switches to SimConnect. `--input=simconnect`
+uses SimConnect events for everything instead.
 
 vJoy setup:
 
@@ -54,15 +56,8 @@ vJoy setup:
    until the phone's idle puts the sim's lever exactly at idle.
 
    The server also logs this table at startup. Pitch direction comes from the MSFS binding: if it's
-   backwards, tick "reverse axis" there.
-
-A control the vJoy device lacks (say Rz not enabled) falls back to SimConnect on its own. To keep one on
-SimConnect deliberately, e.g. when its vJoy binding doesn't work on some aircraft, list it in
-`server/config.json`:
-
-```json
-"simconnect_controls": ["rudder", "gear"]
-```
+   backwards, tick "reverse axis" there. Throttle invert (Settings → Throttle) does the same job for the
+   throttle and only applies in vJoy mode; SimConnect mode ignores it.
 
 While the sim's autothrottle is active, the throttle lever shows an **A/T** badge and the server stops
 moving the vJoy throttle to follow the sim, so it can't knock autothrottle off.

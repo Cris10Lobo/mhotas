@@ -13,9 +13,8 @@ package vjoy
 import (
 	"fmt"
 	"log/slog"
-	"sort"
+	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"mhotas/internal/control"
@@ -33,7 +32,14 @@ var axisUsage = map[control.AxisID]uint32{
 }
 
 var axisLetter = map[uint32]string{
-	vjoylink.AxisX: "X", vjoylink.AxisY: "Y", vjoylink.AxisZ: "Z", vjoylink.AxisRZ: "RZ",
+	vjoylink.AxisX: "X", vjoylink.AxisY: "Y", vjoylink.AxisZ: "Z", vjoylink.AxisRZ: "Rz",
+}
+
+// Sim is the SimConnect read connection vJoy mode keeps open for
+// telemetry. The backend only reports its readiness and closes it.
+type Sim interface {
+	Ready() bool
+	Close() error
 }
 
 type axis struct {
@@ -42,132 +48,142 @@ type axis struct {
 }
 
 type Backend struct {
-	axes        map[control.AxisID]axis // only axes the device actually has
-	buttons     int
-	signed      atomic.Bool
-	invert      atomic.Bool
-	reverseHeld atomic.Bool
+	sim  Sim
+	axes map[control.AxisID]axis
 
-	throttleMu sync.Mutex // serializes phone writes with telemetry resyncs
-	sync       throttleSync
-	idlePoint  float64 // guarded by throttleMu
+	throttleMu  sync.Mutex // serializes throttle writes, resyncs and setting changes
+	sync        throttleSync
+	signed      bool
+	invert      bool
+	idlePoint   float64
+	reverseHeld bool
 }
 
-// New acquires vJoy device 1. It fails only if vJoy itself is unusable
-// (driver missing/disabled, device busy or not configured); controls the
-// device merely lacks (an axis not ticked in vJoyConf, too few buttons) come
-// back in unsupported so the caller can route just those elsewhere.
-func New(log *slog.Logger) (b *Backend, unsupported []string, err error) {
+// New acquires vJoy device 1, which must have every axis and button
+// mHOTAS drives — a missing one is a startup error, not a silent gap.
+func New(log *slog.Logger, sim Sim) (*Backend, error) {
 	if err := vjoylink.Enabled(); err != nil {
-		return nil, nil, fmt.Errorf("vjoy: %w", err)
+		return nil, fmt.Errorf("vjoy: %w", err)
 	}
 	if err := vjoylink.Acquire(deviceID); err != nil {
-		return nil, nil, fmt.Errorf("vjoy: %w", err)
+		return nil, fmt.Errorf("vjoy: %w", err)
 	}
-	vjoylink.ReleaseButtons(deviceID) // a previous crashed session may have left one held
+	// A previous crashed session may have left a button held. Not ResetVJD:
+	// that recenters every axis, which MSFS would apply as real input.
+	vjoylink.ReleaseButtons(deviceID)
 
-	b = &Backend{axes: map[control.AxisID]axis{}, buttons: vjoylink.ButtonCount(deviceID)}
+	b := &Backend{sim: sim, axes: map[control.AxisID]axis{}}
+	var missing []string
 	for id, usage := range axisUsage {
 		if max, ok := vjoylink.AxisMax(deviceID, usage); ok {
 			b.axes[id] = axis{usage: usage, max: max}
 			log.Info("vjoy binding", "axis", axisLetter[usage], "control", id.String())
 		} else {
-			unsupported = append(unsupported, id.String())
+			missing = append(missing, "axis "+axisLetter[usage])
 		}
+	}
+	if n := vjoylink.ButtonCount(deviceID); n < int(control.ButtonThrottleReverseArm) {
+		missing = append(missing, fmt.Sprintf("%d buttons (has %d)", control.ButtonThrottleReverseArm, n))
+	}
+	if len(missing) > 0 {
+		vjoylink.Relinquish(deviceID)
+		return nil, fmt.Errorf("vjoy device %d needs %s — enable them in vJoyConf, or run with --input=simconnect",
+			deviceID, strings.Join(missing, ", "))
 	}
 	for id := control.ButtonGear; id <= control.ButtonThrottleReverseArm; id++ {
-		if int(id) <= b.buttons {
-			log.Info("vjoy binding", "button", int(id), "control", id.String())
-		} else {
-			unsupported = append(unsupported, id.String())
-		}
+		log.Info("vjoy binding", "button", int(id), "control", id.String())
 	}
-	sort.Strings(unsupported)
-	return b, unsupported, nil
+	return b, nil
 }
 
 func (b *Backend) Name() string { return "vjoy" }
 
 func (b *Backend) SetAxis(id control.AxisID, value float64) error {
-	a, ok := b.axes[id]
-	if !ok {
-		return fmt.Errorf("vjoy: device has no axis for %s", id)
-	}
+	a := b.axes[id]
 	if id != control.AxisThrottle {
 		return vjoylink.SetAxis(deviceID, a.usage, toRaw(value, a.max))
 	}
 	b.throttleMu.Lock()
 	defer b.throttleMu.Unlock()
 	b.sync.wrote(time.Now())
-	signed := b.signed.Load()
-	if !signed {
-		b.holdReverse(value < 0)
-	}
-	return vjoylink.SetAxis(deviceID, a.usage, throttleToRaw(value, signed, b.idlePoint, b.invert.Load(), a.max))
+	return b.writeThrottle(value)
 }
 
 // SyncThrottle implements control.ThrottleSyncer: moves the vJoy throttle
 // to the sim's actual lever position when the sim changed it some other
-// way — see throttleSync. value arrives already calibrated (see
-// transport.Server.SyncThrottle), in the same units as SetAxis, so MSFS
-// receives the position it already has and nothing moves in the sim. The
-// reverse button isn't touched.
-func (b *Backend) SyncThrottle(value float64, autothrottle bool) {
-	a, ok := b.axes[control.AxisThrottle]
-	if !ok {
-		return
-	}
+// way — see throttleSync. MSFS receives the position it already has, so
+// nothing moves in the sim.
+func (b *Backend) SyncThrottle(sim float64, autothrottle bool) {
 	b.throttleMu.Lock()
 	defer b.throttleMu.Unlock()
-	if b.sync.shouldSync(value, autothrottle, time.Now()) {
-		vjoylink.SetAxis(deviceID, a.usage, throttleToRaw(value, b.signed.Load(), b.idlePoint, b.invert.Load(), a.max))
+	if b.sync.shouldSync(sim, autothrottle, time.Now()) {
+		b.writeThrottle(sim)
 	}
 }
 
+// writeThrottle writes the axis and, in the unsigned convention, the
+// reverse-hold button with it — the axis alone is only a magnitude there,
+// so a stale button would turn reverse into forward thrust or vice versa.
+// Caller holds throttleMu.
+func (b *Backend) writeThrottle(value float64) error {
+	if err := b.holdReverse(!b.signed && value < 0); err != nil {
+		return err
+	}
+	a := b.axes[control.AxisThrottle]
+	return vjoylink.SetAxis(deviceID, a.usage, throttleToRaw(value, b.signed, b.idlePoint, b.invert, a.max))
+}
+
 // holdReverse presses the reverse button while the lever is in the reverse
-// zone (unsigned convention only), edge-triggered so it isn't rewritten on
-// every axis update. Same button the nudge control's REV hold uses, so one
-// MSFS binding ("reverse thrust, hold") covers both.
-func (b *Backend) holdReverse(want bool) {
-	if int(control.ButtonThrottleReverseArm) > b.buttons {
-		return
+// zone, edge-triggered so it isn't rewritten on every axis update. Same
+// button the nudge control's REV hold uses, so one MSFS binding ("reverse
+// thrust, hold") covers both. Caller holds throttleMu.
+func (b *Backend) holdReverse(want bool) error {
+	if b.reverseHeld == want {
+		return nil
 	}
-	if b.reverseHeld.Swap(want) != want {
-		vjoylink.SetButton(deviceID, uint8(control.ButtonThrottleReverseArm), want)
+	if err := vjoylink.SetButton(deviceID, uint8(control.ButtonThrottleReverseArm), want); err != nil {
+		return err
 	}
+	b.reverseHeld = want
+	return nil
 }
 
 // SetButton forwards press and release both: a vJoy button is held HID
 // state, so whether it acts as a toggle, momentary or repeat is decided by
 // the MSFS binding, not here.
 func (b *Backend) SetButton(id control.ButtonID, pressed bool) error {
-	if int(id) > b.buttons {
-		return fmt.Errorf("vjoy: device has no button %d (%s)", id, id)
-	}
 	return vjoylink.SetButton(deviceID, uint8(id), pressed)
 }
 
-func (b *Backend) Ready() bool { return true }
+// Ready reports whether the sim is connected: vJoy is always writable once
+// acquired, but nothing reaches MSFS without it running.
+func (b *Backend) Ready() bool { return b.sim.Ready() }
 
 func (b *Backend) Close() error {
 	vjoylink.ReleaseButtons(deviceID)
 	vjoylink.Relinquish(deviceID)
-	return nil
+	return b.sim.Close()
 }
 
-// SetSignedThrottle and SetSignedThrottleIdle implement
+// SetSignedThrottle, SetSignedThrottleIdle and SetThrottleInvert implement
 // control.SignedThrottleSetter.
 func (b *Backend) SetSignedThrottle(signed bool) {
-	b.signed.Store(signed)
+	b.throttleMu.Lock()
+	defer b.throttleMu.Unlock()
+	b.signed = signed
 	if signed {
-		b.holdReverse(false)
+		b.holdReverse(false) // signed mode never touches the button again
 	}
 }
 
-func (b *Backend) SetThrottleInvert(invert bool) { b.invert.Store(invert) }
+func (b *Backend) SetThrottleInvert(invert bool) {
+	b.throttleMu.Lock()
+	defer b.throttleMu.Unlock()
+	b.invert = invert
+}
 
 func (b *Backend) SetSignedThrottleIdle(idle float64) {
 	b.throttleMu.Lock()
+	defer b.throttleMu.Unlock()
 	b.idlePoint = idle
-	b.throttleMu.Unlock()
 }

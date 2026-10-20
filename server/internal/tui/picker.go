@@ -9,7 +9,7 @@ import (
 
 var inputOptions = []struct{ value, label string }{
 	{"vjoy", "vJoy        all input through the vJoy device, SimConnect for telemetry"},
-	{"simconnect", "SimConnect  all input through SimConnect events"},
+	{"simconnect", "SimConnect  all input through SimConnect events, no vJoy"},
 }
 
 // ErrCancelled is returned by PickInput when the user quits instead of

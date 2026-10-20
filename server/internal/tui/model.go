@@ -59,10 +59,8 @@ type Model struct {
 	logsReady bool // false until the first WindowSizeMsg gives real dimensions
 }
 
-// requestedInput is the -input mode asked for, so a vJoy fallback shows as
-// one instead of looking like a deliberate SimConnect choice.
-func New(srv *transport.Server, backend control.Output, requestedInput string, tail *LogTail) Model {
-	m := Model{srv: srv, backend: backend, tail: tail, input: inputLabel(backend, requestedInput)}
+func New(srv *transport.Server, backend control.Output, tail *LogTail) Model {
+	m := Model{srv: srv, backend: backend, tail: tail, input: inputLabel(backend)}
 
 	// Non-fatal if this fails (a font-data bug, say) — the dashboard's job
 	// is showing sim/device status, not the banner; fall back to plain
@@ -265,17 +263,11 @@ func dot(ok bool) string {
 	return waitStyle.Render("○")
 }
 
-func inputLabel(backend control.Output, requested string) string {
-	if r, ok := backend.(*control.Router); ok {
-		if fb := r.FallbackControls(); len(fb) > 0 {
-			return "vJoy (SimConnect: " + strings.Join(fb, ", ") + ")"
-		}
+func inputLabel(backend control.Output) string {
+	switch backend.Name() {
+	case "vjoy":
 		return "vJoy"
-	}
-	if backend.Name() == "simconnect" {
-		if requested == "vjoy" {
-			return waitStyle.Render("SimConnect (vJoy unavailable, see log)")
-		}
+	case "simconnect":
 		return "SimConnect"
 	}
 	return backend.Name()

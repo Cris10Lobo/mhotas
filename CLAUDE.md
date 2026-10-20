@@ -10,9 +10,10 @@ gear position) mirrored back to the screen via SimConnect. Unlike prior art (vir
 Fly-By-Wireless, Virtual Yoke Lite), which all inject input through a generic vJoy virtual joystick with
 no read path, this project talks to MSFS2024 directly through SimConnect — giving both control fidelity
 and a live telemetry channel back to the phone. Input defaults to a vJoy virtual joystick
-(`--input=vjoy`, bound in MSFS's own controls menu), with SimConnect events as the fallback
-(`--input=simconnect`, or automatically when vJoy is unavailable). Either way SimConnect stays connected
-and is the source of truth: every readable control state streams back so the phone mirrors the sim.
+(`--input=vjoy`, bound in MSFS's own controls menu) or SimConnect events (`--input=simconnect`) — two
+separate modes, never mixed, with no automatic fallback between them. Either way SimConnect stays
+connected and is the source of truth: every readable control state streams back so the phone mirrors
+the sim.
 
 Repo is three independent build units tied together by a hand-maintained wire protocol:
 
@@ -118,20 +119,26 @@ curve/invert-shaped by `internal/calibration` — a backend's only job is final 
 actual write.
 
 `--backend` picks `log` or `simconnect`. `simconnect` always opens the SimConnect connection (telemetry
-needs it); `--input` (or the TUI picker when the flag is absent) then decides where writes go. vJoy and
-SimConnect are separate, independent backends — neither knows about the other. `control.Router`
-(build-tag-free, tested) composes them: vJoy for everything, except controls the vJoy device lacks plus
-any listed in config's `simconnect_controls`, which go to SimConnect. If vJoy can't start at all,
-`cmd/mhotas-server/backend_windows.go` uses plain SimConnect instead. vJoy's mapping is fixed (pitch=Y,
-roll=X, throttle=Z, rudder=RZ, button N = `ButtonID` N) since the MSFS binding is where meaning is set.
+needs it); `--input` (or the TUI picker when the flag is absent) then picks exactly one write path —
+`control/vjoy` or `control/simconnect`, separate backends that never mix (a deliberate choice: an
+earlier per-control/whole-server fallback was removed as not worth its complexity). vJoy mode opens a
+plain `simlink` connection for telemetry only, and fails at startup if the device lacks any axis or
+button it drives. vJoy's mapping is fixed (pitch=Y, roll=X, throttle=Z, rudder=Rz, button N = `ButtonID`
+N) since the MSFS binding is where meaning is set.
+
+Throttle values pass through several spaces, and most bugs on this branch were a transform in the wrong
+one: phone lever → `calibration.Curve` (dead zone/expo; *not* invert, see below) → backend
+`control.RemapIdle` (`signed_throttle_idle`) → throttle invert (`SetThrottleInvert`: mirrors the final
+axis like MSFS's "reverse axis", vJoy only — inverting before the remap swapped forward/reverse around
+idle) → axis. The sim's lever reading is in the curve's *output* space: vJoy resync writes it as-is,
+and `transport.SendTelemetry` maps it through `Curve.Inverse` before the phone shows it.
 
 A vJoy axis holds its last value, so `control/vjoy` implements `control.ThrottleSyncer`: telemetry
-feeds the sim's throttle through `transport.Server.SyncThrottle`, which applies the throttle's
-calibration first (as if the phone sent that position — skipping it wrote the mirror image when invert
-was on, and the sim jumped to it), and vJoy moves its axis to match after an in-sim change. Never while
-autothrottle is active, and after any write the phone owns the throttle until the sim's lever stops
-moving (many aircraft slew it); only a later, finished move away from that settled position resyncs —
-see `control/vjoy/sync.go`. The app's `_ThrottleLever` follows the same settle rule.
+feeds it the sim's throttle and it moves the axis to match after an in-sim change. Never while
+autothrottle is driving the lever or the lever is in reverse, and after any write the phone owns the
+throttle until the sim's lever stops moving (many aircraft slew it); only a later, finished move away
+from that settled position resyncs — see `control/vjoy/sync.go`. The app's `_ThrottleLever` follows the
+same settle rule.
 
 ### Calibration is server-side except recentering
 
