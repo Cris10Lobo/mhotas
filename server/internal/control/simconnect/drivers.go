@@ -23,7 +23,7 @@ const (
 	driverThrottleEx1 = "throttle_ex1" // idle-range throttle; reverse convention switchable live, see throttleEx1Driver
 	driverToeBrake    = "toe_brake"    // momentary, needs both press and release
 	driverPauseToggle = "pause_toggle" // explicit target computed from Client.Paused(), not a bare toggle
-	driverSpoilerArm  = "spoiler_arm"  // explicit value + locally-tracked arm state, no telemetry readback
+	driverSpoilerArm  = "spoiler_arm"  // explicit target computed from the SPOILERS ARMED readback
 	driverReverseArm  = "reverse_arm"  // momentary; shares Client.SetReverseArmed's state with throttleEx1Driver
 )
 
@@ -201,7 +201,6 @@ type throttleEx1Driver struct {
 	log    *slog.Logger
 
 	signed atomic.Bool
-	invert atomic.Bool
 
 	idleMu    sync.Mutex
 	idlePoint float64
@@ -209,15 +208,11 @@ type throttleEx1Driver struct {
 
 func (d *throttleEx1Driver) SetSignedThrottle(signed bool) { d.signed.Store(signed) }
 
-func (d *throttleEx1Driver) SetThrottleInvert(invert bool) { d.invert.Store(invert) }
-
-// setThrottle applies SetThrottleInvert to the final raw value.
-func (d *throttleEx1Driver) setThrottle(raw int32) error {
-	if d.invert.Load() {
-		raw = -raw
-	}
-	return d.client.SetThrottle(raw)
-}
+// SetThrottleInvert is deliberately a no-op. Throttle invert exists to
+// undo a reversed MSFS axis binding, and SimConnect events go through no
+// binding — honoring a value tuned for vJoy here turned phone idle into up
+// to full power when switching input modes with the same config.
+func (d *throttleEx1Driver) SetThrottleInvert(bool) {}
 
 func (d *throttleEx1Driver) SetSignedThrottleIdle(idle float64) {
 	d.idleMu.Lock()
@@ -230,7 +225,7 @@ func (d *throttleEx1Driver) SetAxis(value float64) error {
 		d.idleMu.Lock()
 		idle := d.idlePoint
 		d.idleMu.Unlock()
-		return d.setThrottle(toSignedThrottleRaw(value, idle, simlink.AxisRange))
+		return d.client.SetThrottle(toSignedThrottleRaw(value, idle, simlink.AxisRange))
 	}
 
 	wantReverse := value < 0
@@ -241,7 +236,7 @@ func (d *throttleEx1Driver) SetAxis(value float64) error {
 	if wantReverse {
 		magnitude = -value
 	}
-	return d.setThrottle(toSignedThrottleRaw(magnitude, stockIdlePoint, simlink.AxisRange))
+	return d.client.SetThrottle(toSignedThrottleRaw(magnitude, stockIdlePoint, simlink.AxisRange))
 }
 
 // toeBrakeDriver is momentary (apply while held, release on lift), unlike
@@ -280,33 +275,21 @@ func (d *pauseToggleDriver) SetButton(pressed bool) error {
 	return d.client.SetPause(!d.client.Paused())
 }
 
-// spoilerArmDriver fires on press only, toggling its own locally-tracked
-// arm state — SPOILERS_ARM_SET takes an explicit value, not a toggle, but
-// unlike pause there's no telemetry readback to flip against yet (see
-// simlink.Client.SetSpoilersArmed).
-//
-// ponytail: this can drift from the app's own independent copy of the same
-// bool (control_screen.dart's _speedbrakeArmed) — a server restart, an app
-// restart, or a dropped 3x-redundant BUTTON packet leaves one side's guess
-// wrong with nothing to reconcile it. Add spoilersArmed to TELEMETRY
-// (matching parkingBrakeSet/paused's readback pattern) if this bites in
-// practice.
+// spoilerArmDriver fires on press only, sending the opposite of the sim's
+// actual SPOILERS ARMED state as an explicit value (SPOILERS_ARM_SET, see
+// simlink.Client.SetSpoilersArmed) — same read-the-truth approach as
+// pauseToggleDriver, so a change made in the sim can't leave it out of
+// step. Before any telemetry has arrived it can only guess: arm.
 type spoilerArmDriver struct {
 	client *simlink.Client
-
-	mu    sync.Mutex
-	armed bool
 }
 
 func (d *spoilerArmDriver) SetButton(pressed bool) error {
 	if !pressed {
 		return nil
 	}
-	d.mu.Lock()
-	d.armed = !d.armed
-	armed := d.armed
-	d.mu.Unlock()
-	return d.client.SetSpoilersArmed(armed)
+	state, _ := d.client.LatestState()
+	return d.client.SetSpoilersArmed(state.SpoilersArmed == 0)
 }
 
 // inputEventAxisDriver writes a DOUBLE-typed MSFS2024 Input Event by name,

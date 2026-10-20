@@ -379,35 +379,8 @@ func TestFailsafeNeutralizesAxisAfterTimeout(t *testing.T) {
 	t.Fatal("timed out waiting for failsafe to neutralize pitch while holding throttle")
 }
 
-// syncBackend records SyncThrottle calls on top of fakeBackend.
-type syncBackend struct {
-	fakeBackend
-	synced []float64
-}
-
-func (b *syncBackend) SyncThrottle(value float64, _ bool) { b.synced = append(b.synced, value) }
-
-func TestSyncThrottleAppliesCalibration(t *testing.T) {
-	cfg := config.Default()
-	cfg.ListenPort = 0
-	cfg.Throttle.Curve.Invert = true
-	backend := &syncBackend{}
-	srv, err := New(cfg, backend, slog.New(slog.DiscardHandler), "")
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	t.Cleanup(func() { srv.conn.Close() })
-
-	// The sim's lever at 0.8 must reach the backend the way a phone value of
-	// 0.8 would: inverted. Raw 0.8 is the mirror image the sim jumps to.
-	srv.SyncThrottle(0.8, false)
-	if len(backend.synced) != 1 || backend.synced[0] != -0.8 {
-		t.Fatalf("backend got %v, want [-0.8]", backend.synced)
-	}
-}
-
-// signedRecorder stands in for the vJoy backend behind a control.Router,
-// recording the signed-throttle settings it's given.
+// signedRecorder stands in for the vJoy backend, recording the
+// signed-throttle settings it's given.
 type signedRecorder struct {
 	fakeBackend
 	signed bool
@@ -446,18 +419,14 @@ func (b *signedRecorder) inverted() bool {
 }
 
 // The phone Settings page's signed-throttle toggle and idle slider must
-// reach the vJoy backend through the Router, at startup and live.
-func TestSignedThrottleSettingsReachRoutedBackend(t *testing.T) {
+// reach the backend, at startup and live.
+func TestSignedThrottleSettingsReachBackend(t *testing.T) {
 	cfg := config.Default()
 	cfg.ListenPort = 0
 	cfg.Throttle.SignedThrottle = true
 	cfg.Throttle.SignedThrottleIdle = -0.25
 	vj := &signedRecorder{}
-	router, err := control.NewRouter(vj, &fakeBackend{}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	srv, err := New(cfg, router, slog.New(slog.DiscardHandler), "")
+	srv, err := New(cfg, vj, slog.New(slog.DiscardHandler), "")
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -507,4 +476,38 @@ func TestSignedThrottleSettingsReachRoutedBackend(t *testing.T) {
 	}
 	signed, idle := vj.settings()
 	t.Fatalf("after CONFIG_SET: got signed=%v idle=%v, want true -0.45", signed, idle)
+}
+
+// The phone lever must show the input that produces the sim's lever
+// position: expo 0.5 turns a 0.5 input into 0.3125, so a sim lever at
+// 0.3125 must reach the phone as 0.5.
+func TestTelemetryThrottleUndoesCurve(t *testing.T) {
+	cfg := config.Default()
+	cfg.ListenPort = 0
+	cfg.Throttle.Curve.Expo = 0.5
+	srv, _, client := newTestServer(t, cfg)
+	sendHello(t, client)
+
+	if err := srv.SendTelemetry(protocol.Telemetry{ThrottlePercent: 0.3125}); err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]byte, 1500)
+	client.SetReadDeadline(time.Now().Add(2 * time.Second))
+	for {
+		n, err := client.Read(buf)
+		if err != nil {
+			t.Fatalf("read: %v", err)
+		}
+		if h, err := protocol.DecodeHeader(buf[:n]); err != nil || h.Type != protocol.TypeTelemetry {
+			continue // CONFIG etc.
+		}
+		got, err := protocol.DecodeTelemetry(buf[:n])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if math.Abs(float64(got.ThrottlePercent)-0.5) > 1e-4 {
+			t.Fatalf("phone got throttle %v, want 0.5", got.ThrottlePercent)
+		}
+		return
+	}
 }

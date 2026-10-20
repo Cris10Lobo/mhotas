@@ -103,19 +103,6 @@ func New(cfg config.Config, backend control.Output, log *slog.Logger, configPath
 	}, nil
 }
 
-// SyncThrottle implements control.ThrottleSyncer for telemetry: the sim's
-// lever position goes through the throttle's calibration, exactly like a
-// phone value at that position would, before reaching the backend. The
-// phone lever shows the sim's position and sends from it, so this is what
-// the backend would hold had the phone put it there. Skipping the curve
-// writes the wrong value — with invert on, the mirror image, which the sim
-// then jumps to.
-func (s *Server) SyncThrottle(sim float64, autothrottle bool) {
-	if ts, ok := s.backend.(control.ThrottleSyncer); ok {
-		ts.SyncThrottle(s.curve(control.AxisThrottle, s.axisConfig(control.AxisThrottle)).Apply(sim), autothrottle)
-	}
-}
-
 // curve is the calibration curve transport itself applies. Throttle invert
 // is left out when the backend takes it over (control.SignedThrottleSetter):
 // the backend reverses the final output after its idle remap, which is
@@ -519,11 +506,18 @@ func clampSigned(v float64) float64 {
 
 // SendTelemetry pushes a TELEMETRY packet to the currently connected phone,
 // if any. Safe to call with no phone connected (no-op).
+//
+// ThrottlePercent is the sim's lever, which is the throttle curve's output;
+// it's mapped back to the curve's input before sending, so the phone's
+// lever shows the position that produces it and a drag from there sends
+// the same value. Without that, a nonzero expo/dead zone made the lever
+// jump on every sync.
 func (s *Server) SendTelemetry(t protocol.Telemetry) error {
 	addr := s.currentClient()
 	if addr == nil {
 		return nil
 	}
+	t.ThrottlePercent = float32(s.curve(control.AxisThrottle, s.axisConfig(control.AxisThrottle)).Inverse(float64(t.ThrottlePercent)))
 	pkt := protocol.EncodeTelemetry(s.nextSeq(), t)
 	_, err := s.conn.WriteToUDP(pkt, addr)
 	return err

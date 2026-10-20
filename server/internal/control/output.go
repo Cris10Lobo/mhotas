@@ -158,7 +158,9 @@ type ThrottleSyncer interface {
 // specific to switch (logbackend, vjoy) needs no stub.
 //
 // SetThrottleInvert reverses the throttle's final output, after the idle
-// remap — like ticking "reverse axis" in MSFS. Inverting the input before
+// remap — like ticking "reverse axis" in MSFS. Only meaningful for a
+// backend that goes through an MSFS axis binding (vJoy); SimConnect
+// ignores it. Inverting the input before
 // the remap instead (what calibration.Curve's Invert does for other axes)
 // swaps the forward and reverse zones around idle, so with idle anywhere
 // but center, phone idle lands far up the forward range.

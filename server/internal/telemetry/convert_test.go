@@ -53,3 +53,21 @@ func TestPercentToUnit(t *testing.T) {
 		}
 	}
 }
+
+func TestAutothrottleActive(t *testing.T) {
+	cases := []struct {
+		r    rawState
+		want bool
+	}{
+		{rawState{AutothrottleArmed: 1}, false}, // armed, pilot on manual thrust
+		{rawState{AutothrottleArmed: 1, AirspeedHold: 1}, true},
+		{rawState{AutothrottleArmed: 1, MachHold: 1}, true},
+		{rawState{AirspeedHold: 1}, false}, // speed mode without A/T: pitch-on-speed
+		{rawState{ManagedThrottleActive: 1}, true},
+	}
+	for _, c := range cases {
+		if got := autothrottleActive(c.r); got != c.want {
+			t.Errorf("autothrottleActive(%+v) = %v, want %v", c.r, got, c.want)
+		}
+	}
+}

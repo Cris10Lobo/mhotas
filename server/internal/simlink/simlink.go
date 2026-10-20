@@ -119,6 +119,8 @@ type aircraftStateData struct {
 	AutopilotMaster        int32
 	AutothrottleArmed      int32
 	ManagedThrottleActive  int32
+	AirspeedHold           int32
+	MachHold               int32
 }
 
 type AircraftState struct {
@@ -161,11 +163,14 @@ type AircraftState struct {
 	ElevatorTrim float32
 	// AutopilotMaster is AUTOPILOT MASTER, 0 or 1.
 	AutopilotMaster int32
-	// AutothrottleArmed (AUTOPILOT THROTTLE ARM) and ManagedThrottleActive
-	// (AUTOPILOT MANAGED THROTTLE ACTIVE) are read separately because
-	// aircraft disagree on which one their autothrottle actually sets.
+	// AutothrottleArmed (AUTOPILOT THROTTLE ARM), ManagedThrottleActive
+	// (AUTOPILOT MANAGED THROTTLE ACTIVE, Airbus A/THR), AirspeedHold and
+	// MachHold feed telemetry's autothrottle-driving guess; armed alone
+	// isn't it — a 737's A/T switch stays armed all flight.
 	AutothrottleArmed     int32
 	ManagedThrottleActive int32
+	AirspeedHold          int32
+	MachHold              int32
 }
 
 // LatestState returns the most recent aircraft-state reading, or false if
@@ -449,6 +454,8 @@ func setupTelemetryRead(client engine.Client) {
 	client.AddToDataDefinition(defAircraftState, "AUTOPILOT MASTER", "bool", types.SIMCONNECT_DATATYPE_INT32, 0, 11)
 	client.AddToDataDefinition(defAircraftState, "AUTOPILOT THROTTLE ARM", "bool", types.SIMCONNECT_DATATYPE_INT32, 0, 12)
 	client.AddToDataDefinition(defAircraftState, "AUTOPILOT MANAGED THROTTLE ACTIVE", "bool", types.SIMCONNECT_DATATYPE_INT32, 0, 13)
+	client.AddToDataDefinition(defAircraftState, "AUTOPILOT AIRSPEED HOLD", "bool", types.SIMCONNECT_DATATYPE_INT32, 0, 14)
+	client.AddToDataDefinition(defAircraftState, "AUTOPILOT MACH HOLD", "bool", types.SIMCONNECT_DATATYPE_INT32, 0, 15)
 
 	client.RequestDataOnSimObject(
 		reqAircraftState, defAircraftState,
@@ -492,6 +499,8 @@ func (c *Client) watchTelemetry(messages <-chan engine.Message) {
 			AutopilotMaster:        as.AutopilotMaster,
 			AutothrottleArmed:      as.AutothrottleArmed,
 			ManagedThrottleActive:  as.ManagedThrottleActive,
+			AirspeedHold:           as.AirspeedHold,
+			MachHold:               as.MachHold,
 		})
 	}
 }

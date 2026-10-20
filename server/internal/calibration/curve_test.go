@@ -1,6 +1,9 @@
 package calibration
 
-import "testing"
+import (
+	"math"
+	"testing"
+)
 
 func approxEqual(a, b float64) bool {
 	const eps = 1e-9
@@ -62,5 +65,16 @@ func TestCurveExpoPreservesEndpoints(t *testing.T) {
 	// less than half the linear output.
 	if got := c.Apply(0.5); got >= 0.5 {
 		t.Errorf("Apply(0.5) with full expo = %v, want < 0.5", got)
+	}
+}
+
+func TestInverseUndoesApply(t *testing.T) {
+	curves := []Curve{{}, {DeadZone: 0.1}, {Expo: 0.5}, {DeadZone: 0.05, Expo: 0.8, Invert: true}, {Expo: 1}}
+	for _, c := range curves {
+		for _, v := range []float64{-1, -0.6, -0.25, 0, 0.1, 0.3125, 0.5, 0.9, 1} {
+			if got := c.Apply(c.Inverse(v)); math.Abs(got-v) > 1e-6 {
+				t.Errorf("%+v: Apply(Inverse(%v)) = %v", c, v, got)
+			}
+		}
 	}
 }

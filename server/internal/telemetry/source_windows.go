@@ -71,6 +71,8 @@ func (s *Source) Run(ctx context.Context, sink Sink) error {
 				AutopilotMaster:        as.AutopilotMaster,
 				AutothrottleArmed:      as.AutothrottleArmed,
 				ManagedThrottleActive:  as.ManagedThrottleActive,
+				AirspeedHold:           as.AirspeedHold,
+				MachHold:               as.MachHold,
 				Paused:                 s.client.Paused(),
 			})
 			if s.syncer != nil {

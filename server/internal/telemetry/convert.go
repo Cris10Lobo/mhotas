@@ -25,6 +25,8 @@ type rawState struct {
 	AutopilotMaster        int32
 	AutothrottleArmed      int32
 	ManagedThrottleActive  int32
+	AirspeedHold           int32
+	MachHold               int32
 	Paused                 bool
 }
 
@@ -43,8 +45,19 @@ func toTelemetry(r rawState) protocol.Telemetry {
 		SpoilersArmed:      r.SpoilersArmed != 0,
 		ElevatorTrim:       clampUnit(r.ElevatorTrim),
 		AutopilotMaster:    r.AutopilotMaster != 0,
-		AutothrottleActive: r.AutothrottleArmed != 0 || r.ManagedThrottleActive != 0,
+		AutothrottleActive: autothrottleActive(r),
 	}
+}
+
+// autothrottleActive guesses whether the autothrottle is driving the lever
+// right now: Airbus managed thrust, or the A/T armed with a speed/Mach mode
+// engaged. Armed alone isn't enough — a 737's A/T switch stays armed with
+// the pilot on manual thrust, which would block vJoy resync all flight.
+// ponytail: study-level aircraft may keep this in L:vars instead; add
+// per-aircraft reads if one shows up on a real aircraft.
+func autothrottleActive(r rawState) bool {
+	return r.ManagedThrottleActive != 0 ||
+		(r.AutothrottleArmed != 0 && (r.AirspeedHold != 0 || r.MachHold != 0))
 }
 
 // gearPosition maps GEAR POSITION's 0..100 percent to the protocol's

@@ -50,6 +50,11 @@ func (s *throttleSync) wrote(now time.Time) {
 // the device now, and records that write if so. Never while autothrottle
 // is active: to MSFS a vJoy write is the pilot moving a hardware lever,
 // which can disconnect it.
+//
+// Never in reverse either: aircraft disagree on how far reverse travel
+// reads (full reverse can be -20%, not -100%), so writing that reading back
+// would pull the lever most of the way out of reverse. The phone keeps
+// owning the throttle until it's back out.
 func (s *throttleSync) shouldSync(sim float64, autothrottle bool, now time.Time) bool {
 	if math.Abs(sim-s.last) > settleEps {
 		s.lastMove = now
@@ -58,7 +63,7 @@ func (s *throttleSync) shouldSync(sim float64, autothrottle bool, now time.Time)
 	stopped := now.Sub(s.lastMove) >= settleTime
 
 	switch {
-	case autothrottle:
+	case autothrottle, sim < 0:
 		return false
 	case s.lastWrite.IsZero():
 		// Nothing written since startup, so the device's value is unknown:

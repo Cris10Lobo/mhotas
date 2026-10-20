@@ -92,9 +92,9 @@ not required for `AXIS`/`BUTTON` processing to function.
 | 5      | 1    | `flapHandleIndexMax`   | int8, max flap handle index for the loaded aircraft         |
 | 6      | 1    | `gearPosition`         | uint8: 0 = up, 1 = down, 2 = in transit                     |
 | 7      | 1    | `parkingBrakeSet`      | uint8: 0/1, the sim's *actual* current parking brake state, independent of the phone's own button-tap history |
-| 8      | 4    | `throttlePercent`      | float32, -1..1, the sim's *actual* current throttle lever position (negative = reverse), independent of whatever the phone last commanded |
+| 8      | 4    | `throttlePercent`      | float32, -1..1, the sim's *actual* current throttle lever position (negative = reverse), independent of whatever the phone last commanded — mapped back through the throttle's dead zone/expo (`Curve.Inverse`), so it's the phone-lever position that produces it |
 | 12     | 1    | `paused`               | uint8: 0/1, the sim's *actual* current pause state, from SimConnect's own Pause system event, not a guess based on the phone's last PAUSE tap |
-| 13     | 1    | `flags`                | bitmask: bit0 = `stallWarning` (SimConnect `STALL WARNING`), bit1 = `onGround` (`SIM ON GROUND`), bit2 = `spoilersArmed` (`SPOILERS ARMED`), bit3 = `autopilotMaster` (`AUTOPILOT MASTER`), bit4 = `autothrottleActive` (`AUTOPILOT THROTTLE ARM` or `AUTOPILOT MANAGED THROTTLE ACTIVE`), bits 5-7 unused. Was a plain "reserved, must be 0" byte through v6. |
+| 13     | 1    | `flags`                | bitmask: bit0 = `stallWarning` (SimConnect `STALL WARNING`), bit1 = `onGround` (`SIM ON GROUND`), bit2 = `spoilersArmed` (`SPOILERS ARMED`), bit3 = `autopilotMaster` (`AUTOPILOT MASTER`), bit4 = `autothrottleActive` (`AUTOPILOT MANAGED THROTTLE ACTIVE`, or `AUTOPILOT THROTTLE ARM` with `AUTOPILOT AIRSPEED HOLD`/`MACH HOLD` — armed alone doesn't count), bits 5-7 unused. Was a plain "reserved, must be 0" byte through v6. |
 | 14     | 4    | `groundSpeedKnots`     | float32, `GROUND VELOCITY` in knots — drives the taxi/ground-roll rumble haptic's pulse rate; meaningless while `onGround` is false |
 | 18     | 4    | `spoilersHandle`       | float32, 0..1, `SPOILERS HANDLE POSITION` — the speedbrake lever mirrors it |
 | 22     | 4    | `elevatorTrim`         | float32, -1..1, `ELEVATOR TRIM PCT` — shown on the trim rocker |
@@ -129,7 +129,8 @@ Four fixed-order 18-byte axis-calibration blocks, pitch/roll/throttle/rudder:
 | 14                      | 4    | `signedThrottleIdle` | float32, -1..1 |
 
 On the `throttle` block, `invert` reverses the final axis output after the idle remap (like MSFS's own
-"reverse axis"), not the input value: inverting the input would swap the forward and reverse zones around
+"reverse axis"), not the input value, and only applies to vJoy input (SimConnect events go through no
+MSFS axis binding to compensate for): inverting the input would swap the forward and reverse zones around
 `signedThrottleIdle`, putting phone idle far up the forward range whenever idle isn't at the center.
 
 `signedThrottle`/`signedThrottleIdle` only mean anything on the `throttle` block — see "Reverse-thrust

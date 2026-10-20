@@ -53,3 +53,15 @@ func TestThrottleSync(t *testing.T) {
 		t.Fatal("should sync once autothrottle is off")
 	}
 }
+
+func TestThrottleSyncSkipsReverse(t *testing.T) {
+	var s throttleSync
+	t0 := time.Unix(1000, 0)
+	s.wrote(t0)
+	s.shouldSync(0.3, false, t0.Add(600*time.Millisecond)) // settles: baseline
+	for ms := 650; ms <= 3000; ms += 50 {
+		if s.shouldSync(-0.2, false, t0.Add(time.Duration(ms)*time.Millisecond)) {
+			t.Fatal("resynced a reverse position")
+		}
+	}
+}
