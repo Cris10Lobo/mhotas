@@ -1,4 +1,4 @@
-package com.cris10lobo.mhotas
+package com.mhotas.app
 
 import io.flutter.embedding.android.FlutterActivity
 

@@ -3,7 +3,7 @@
          the vibration package for the stall-shaker/taxi-rumble haptics. -->
     <uses-permission android:name="android.permission.VIBRATE"/>
     <application
-        android:label="mhotas"
+        android:label="mHOTAS"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

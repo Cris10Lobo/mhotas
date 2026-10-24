@@ -40,7 +40,7 @@ func TestButtonRoundTrip(t *testing.T) {
 }
 
 func TestHelloRoundTrip(t *testing.T) {
-	want := Hello{DeviceName: "cris-iphone"}
+	want := Hello{DeviceName: "test-phone"}
 	buf := EncodeHello(0, want)
 	got, err := DecodeHello(buf)
 	if err != nil {
@@ -64,7 +64,7 @@ func TestHelloNameTruncation(t *testing.T) {
 }
 
 func TestHelloAckRoundTrip(t *testing.T) {
-	want := HelloAck{Status: HelloVersionMismatch, ServerName: "cris-pc"}
+	want := HelloAck{Status: HelloVersionMismatch, ServerName: "test-pc"}
 	buf := EncodeHelloAck(7, want)
 	got, err := DecodeHelloAck(buf)
 	if err != nil {
