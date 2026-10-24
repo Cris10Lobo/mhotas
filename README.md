@@ -20,6 +20,26 @@ state back to the phone.
 
 This is an alpha. Expect rough edges, and please open an issue when something breaks.
 
+## Features
+
+### Tilt to fly
+Pitch and roll come from the phone's motion sensors. Tap Calibrate to set neutral however you're holding it, or switch to an on-screen stick.
+
+### The whole cockpit in your hands
+Throttle with reverse, rudder, flaps, gear, speedbrake, trim, parking and toe brakes, autopilot disconnect and pause.
+
+### Stays in sync with the sim
+Flaps, gear, throttle, spoilers, trim, brakes, autopilot and autothrottle stream back from MSFS. Change something with your mouse and the app follows.
+
+### Feel the aircraft
+The phone vibrates with the stall warning and rumbles while you taxi.
+
+### Your layout
+Drag any control to where your thumbs want it. The layout is saved.
+
+### Safe when Wi-Fi drops
+Pitch, roll and rudder return to neutral within half a second, and the throttle stays put.
+
 ## What you need
 
 - A Windows PC running MSFS 2024.
