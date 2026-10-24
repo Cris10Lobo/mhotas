@@ -30,6 +30,7 @@ app/pubspec.lock
 
 docs/milestones.md
 docs/*.png
+!docs/banner.png
 
 # MSFS SDK binary, shipped only via the release workflow
 SimConnect.dll

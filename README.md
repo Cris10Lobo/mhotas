@@ -1,8 +1,5 @@
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/logo.svg">
-    <img src="docs/logo-light.svg" alt="mHOTAS logo" width="160">
-  </picture>
+  <img src="docs/banner.png" alt="mHOTAS: your phone as a flight stick for Microsoft Flight Simulator 2024">
 </p>
 
 # mHOTAS
