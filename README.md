@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/banner.png" alt="mHOTAS: your phone as a flight stick for Microsoft Flight Simulator 2024">
+</p>
+
 # mHOTAS
 
 [![Go](https://github.com/Cris10Lobo/mhotas/actions/workflows/go.yml/badge.svg)](https://github.com/Cris10Lobo/mhotas/actions/workflows/go.yml)
@@ -15,6 +19,58 @@ and streams flaps, gear, throttle, spoilers, trim, parking brake, pause, autopil
 state back to the phone.
 
 This is an alpha. Expect rough edges, and please open an issue when something breaks.
+
+## Features
+
+### Tilt to fly
+Pitch and roll come from the phone's motion sensors. Tap Calibrate to set neutral however you're holding it, or switch to an on-screen stick.
+
+### The whole cockpit in your hands
+Throttle with reverse, rudder, flaps, gear, speedbrake, trim, parking and toe brakes, autopilot disconnect and pause.
+
+### Stays in sync with the sim
+Flaps, gear, throttle, spoilers, trim, brakes, autopilot and autothrottle stream back from MSFS. Change something with your mouse and the app follows.
+
+### Feel the aircraft
+The phone vibrates with the stall warning and rumbles while you taxi.
+
+### Your layout
+Drag any control to where your thumbs want it. The layout is saved.
+
+### Safe when Wi-Fi drops
+Pitch, roll and rudder return to neutral within half a second, and the throttle stays put.
+
+### Two ways to send input
+Use vJoy, a virtual joystick you bind in MSFS's controls menu like any other device, or send everything straight through SimConnect with nothing extra to install.
+
+## The flying screen
+
+<p align="center">
+  <img src="docs/screen.png" alt="The mHOTAS flying screen" width="720">
+</p>
+
+| Control | What it does |
+|---------|--------------|
+| Tilt the phone | Pitch and roll. The attitude display in the middle shows what the sim gets. |
+| Pause button on the attitude display | Holds pitch and roll at neutral so you can put the phone down. Everything else keeps working. |
+| Calibrate | Sets how you're holding the phone right now as neutral. |
+| Throttle (THR) | Drag up for power. Below the idle line is reverse thrust, if signed reverse thrust is on. Shows A/T while autothrottle is flying. |
+| Rudder | Drag left or right. Springs back to center when you let go. |
+| Trim ▲ ▼ | Elevator trim. Hold to keep trimming. The percentage is the sim's trim position. |
+| AP (AP DISC) | Disconnects the autopilot. Lit while the autopilot is on. |
+| Speedbrake (SPD) | Drag between the detents to deploy. ARM toggles auto spoilers. |
+| Flaps (FLAP) | Drag to the notch you want. Follows the sim if you move flaps there. |
+| Gear | Tap to raise or lower. Shows UP, DOWN or in transit. |
+| Park brake (P) | Tap to toggle the parking brake. |
+| Toe brake (BRK) | Hold to brake. |
+| Pause (top bar) | Pauses the sim. |
+| Move icon (top bar) | Edit mode: drag controls around, then tap again to lock the layout. |
+| Settings | On-screen stick instead of tilt, +/- throttle buttons instead of the lever, throttle options and per-axis calibration. |
+
+## Planned
+
+- Microsoft Flight Simulator 2020 support
+- X-Plane support
 
 ## What you need
 
@@ -61,7 +117,9 @@ With a free Apple ID the app stops launching after 7 days and you'll have to run
 
 ### 4. Start the server
 
-1. Unzip `mhotas-server-<version>-windows.zip` anywhere you like.
+1. Unzip `mhotas-server-<version>-windows.zip` anywhere you like. Keep all the files together in one
+   folder. The zip includes `SimConnect.dll`, the library the server uses to talk to MSFS, so you
+   don't need to install the MSFS SDK.
 2. Start MSFS 2024 and load into a flight.
 3. Double-click `start-mhotas.bat`. The first time, Windows Firewall will ask whether to allow
    mhotas-server on the network. Allow it on private networks, or the phone can't reach it.
@@ -131,6 +189,10 @@ modes on its own.
   X, Y, Z, Rz and 15 buttons.
 - Controls do nothing in the sim: check the bindings in MSFS are on the vJoy Device, not your keyboard
   or another controller profile.
+- The server logs an error about SimConnect.dll: `SimConnect.dll` has to be in the same folder as
+  `mhotas-server.exe`. Unzip the release again if it went missing.
+- The server stays on "Connecting" for SimConnect: MSFS has to be running. The server keeps retrying,
+  so you can start it before or after the sim.
 - If the phone loses connection mid-flight, pitch, roll and rudder go back to neutral after about half
   a second and the throttle stays where it was.
 
@@ -165,8 +227,15 @@ flutter test
 flutter run
 ```
 
+To run your own build against the sim you need `SimConnect.dll`. If the `SIMCONNECT_DLL`
+environment variable is set, the server uses that path. Otherwise it looks next to `mhotas-server.exe`,
+then in the usual MSFS 2024 SDK install folders. Installing the SDK from Developer Mode
+in MSFS is the simplest way to get it.
+
 Pushing a tag like `v0.1.0-alpha.1` builds the APK and the Windows server and attaches them to a
-GitHub release.
+GitHub release. `SimConnect.dll` isn't in this repo. The release workflow downloads the newest MSFS
+2024 SDK installer from Microsoft, pulls the DLL out of it and puts it in the server zip. The release
+notes say which SDK version it came from.
 
 ## License
 

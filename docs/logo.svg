@@ -1,0 +1,19 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-label="mHOTAS app icon" xmlns="http://www.w3.org/2000/svg">
+<rect x="0" y="0" width="1024" height="1024" fill="#0F1B2D"/>
+<circle cx="512" cy="470" r="400" fill="none" stroke="#F4F1EA" stroke-opacity="0.09" stroke-width="6"/>
+<circle cx="512" cy="470" r="340" fill="none" stroke="#F4F1EA" stroke-opacity="0.14" stroke-width="4" stroke-dasharray="4 26"/>
+<rect x="484" y="600" width="56" height="424" fill="#9AA6B6"/>
+<rect x="460" y="664" width="104" height="24" rx="12" fill="#9AA6B6"/>
+<path d="M 270 372 V 500 Q 270 566 336 566 H 688 Q 754 566 754 500 V 372" fill="none" stroke="#F4F1EA" stroke-width="76" stroke-linecap="round" stroke-linejoin="round"/>
+<circle cx="270" cy="372" r="17" fill="#FFB020"/>
+<circle cx="754" cy="372" r="17" fill="#FFB020"/>
+<rect x="416" y="290" width="192" height="350" rx="40" fill="#F4F1EA"/>
+<rect x="492" y="301" width="40" height="7" rx="3.5" fill="#0F1B2D" fill-opacity="0.35"/>
+<rect x="432" y="318" width="160" height="294" rx="24" fill="#1F375A"/>
+<path d="M 432 490 L 592 450 V 588 A 24 24 0 0 1 568 612 H 456 A 24 24 0 0 1 432 588 Z" fill="#FFB020"/>
+<line x1="432" y1="490" x2="592" y2="450" stroke="#F4F1EA" stroke-width="5"/>
+<line x1="486" y1="436.5" x2="538" y2="423.5" stroke="#F4F1EA" stroke-opacity="0.55" stroke-width="5" stroke-linecap="round"/>
+<line x1="486" y1="516.5" x2="538" y2="503.5" stroke="#0F1B2D" stroke-opacity="0.45" stroke-width="5" stroke-linecap="round"/>
+<path d="M 452 470 H 490 L 512 490 L 534 470 H 572" fill="none" stroke="#0F1B2D" stroke-width="20" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M 452 470 H 490 L 512 490 L 534 470 H 572" fill="none" stroke="#F4F1EA" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

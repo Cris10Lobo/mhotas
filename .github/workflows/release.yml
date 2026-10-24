@@ -19,13 +19,42 @@ jobs:
         with:
           channel: stable
 
+      # Microsoft publishes the SDK installer without a login but has no "latest" link,
+      # so probe the URL pattern upward from SDK_FLOOR. Bump SDK_FLOOR after a major release.
+      - name: Fetch latest SimConnect.dll
+        id: sdk
+        env:
+          SDK_FLOOR: '1.8'
+        run: |
+          base=https://sdk.flightsimulator.com/msfs2024/files/installers
+          IFS=. read -r major minor <<<"$SDK_FLOOR"
+          version=""
+          for m in $(seq "$minor" $((minor + 3))); do
+            miss=0
+            for p in $(seq 0 40); do
+              v="$major.$m.$p"
+              code=$(curl -s -o /dev/null -I -w '%{http_code}' -m 15 "$base/$v/MSFS2024_SDK_Core_Installer_$v.zip")
+              if [ "$code" = 200 ]; then version=$v; miss=0; else miss=$((miss + 1)); fi
+              [ "$miss" -ge 10 ] && break
+            done
+          done
+          test -n "$version" || { echo "::error::no MSFS 2024 SDK installer found from $SDK_FLOOR"; exit 1; }
+          echo "Using MSFS 2024 SDK $version"
+          sudo apt-get install -y -qq msitools
+          curl -sSf -o /tmp/sdk.zip "$base/$version/MSFS2024_SDK_Core_Installer_$version.zip"
+          unzip -q /tmp/sdk.zip -d /tmp/sdk
+          mkdir -p /tmp/sdk/out
+          msiextract -C /tmp/sdk/out /tmp/sdk/*/MSFS2024_SDK_Core_Installer_$version.msi > /dev/null
+          mkdir -p dist/mhotas-server
+          cp "/tmp/sdk/out/MSFS 2024 SDK/SimConnect SDK/lib/SimConnect.dll" dist/mhotas-server/
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
       - name: Build server
         working-directory: server
         env:
           GOOS: windows
           GOARCH: amd64
         run: |
-          mkdir -p ../dist/mhotas-server
           go build -o ../dist/mhotas-server/mhotas-server.exe ./cmd/mhotas-server
           cp config.json ../dist/mhotas-server/
           printf '@echo off\r\ncd /d "%%~dp0"\r\nmhotas-server.exe --backend=simconnect --config=config.json\r\npause\r\n' > ../dist/mhotas-server/start-mhotas.bat
@@ -41,6 +70,7 @@ jobs:
         with:
           prerelease: ${{ contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') }}
           generate_release_notes: true
+          body: Bundles SimConnect.dll from MSFS 2024 SDK ${{ steps.sdk.outputs.version }}.
           files: |
             dist/mhotas-server-${{ github.ref_name }}-windows.zip
             dist/mhotas-${{ github.ref_name }}.apk

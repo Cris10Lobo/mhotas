@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"unsafe"
@@ -117,7 +119,7 @@ func Connect(ctx context.Context, log *slog.Logger) *Client {
 	c.mgr = manager.New("mHOTAS Server",
 		manager.WithContext(ctx),
 		manager.WithAutoReconnect(true),
-		manager.WithAutoDetect(), // SimConnect.dll isn't always at the library's default path
+		dllOption(log),
 	)
 
 	_ = c.mgr.OnConnectionStateChange(func(oldState, newState manager.ConnectionState) {
@@ -427,3 +429,19 @@ func (c *Client) SetSpoilersArmed(armed bool) error {
 }
 
 func (c *Client) Close() error { return c.mgr.Stop() }
+
+// dllOption prefers the SimConnect.dll shipped next to the exe in release
+// builds, so testers don't need the MSFS SDK. SIMCONNECT_DLL still overrides
+// it, and without a bundled copy the library searches the SDK install paths.
+func dllOption(log *slog.Logger) manager.Option {
+	if os.Getenv("SIMCONNECT_DLL") == "" {
+		if exe, err := os.Executable(); err == nil {
+			bundled := filepath.Join(filepath.Dir(exe), "SimConnect.dll")
+			if _, err := os.Stat(bundled); err == nil {
+				log.Info("using bundled SimConnect.dll", "path", bundled)
+				return manager.WithDLLPath(bundled)
+			}
+		}
+	}
+	return manager.WithAutoDetect()
+}
