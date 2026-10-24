@@ -201,8 +201,11 @@ for the mechanism. Do not hand-roll positioning for a new control on this screen
 
 Open-source (MIT), not published to app stores; the app is meant to be sideloaded. Bundle ID is
 `com.mhotas.app` on both platforms. Pushing a `v*` tag runs `.github/workflows/release.yml`, which
-attaches the Android APK and a Windows server zip (exe, default `config.json`, `start-mhotas.bat`) to a
-GitHub release. The release APK is signed with the CI runner's debug key, so each release has a
+attaches the Android APK and a Windows server zip (exe, `SimConnect.dll`, default `config.json`,
+`start-mhotas.bat`) to a GitHub release. `SimConnect.dll` comes from the `SIMCONNECT_DLL_B64` Actions
+secret and is deliberately not in git: the MSFS SDK EULA doesn't clearly allow redistributing it, so it
+ships only as a release asset (as Little Navmap does), easy to pull if Microsoft objects. `simlink`
+loads the copy next to the exe unless `SIMCONNECT_DLL` is set, else falls back to SDK auto-detection. The release APK is signed with the CI runner's debug key, so each release has a
 different signature until a real keystore is set up. The main `AndroidManifest.xml` must keep the
 `INTERNET` permission: Flutter only adds it to debug/profile builds, and without it the release app
 can't open its UDP socket.

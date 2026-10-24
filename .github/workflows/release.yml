@@ -24,10 +24,14 @@ jobs:
         env:
           GOOS: windows
           GOARCH: amd64
+          # Kept out of git: the MSFS SDK EULA doesn't clearly allow redistribution.
+          SIMCONNECT_DLL_B64: ${{ secrets.SIMCONNECT_DLL_B64 }}
         run: |
           mkdir -p ../dist/mhotas-server
           go build -o ../dist/mhotas-server/mhotas-server.exe ./cmd/mhotas-server
           cp config.json ../dist/mhotas-server/
+          test -n "$SIMCONNECT_DLL_B64" || { echo "::error::SIMCONNECT_DLL_B64 secret is not set"; exit 1; }
+          echo "$SIMCONNECT_DLL_B64" | base64 -d > ../dist/mhotas-server/SimConnect.dll
           printf '@echo off\r\ncd /d "%%~dp0"\r\nmhotas-server.exe --backend=simconnect --config=config.json\r\npause\r\n' > ../dist/mhotas-server/start-mhotas.bat
           cd ../dist && zip -r mhotas-server-${{ github.ref_name }}-windows.zip mhotas-server
 

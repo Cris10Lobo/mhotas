@@ -68,7 +68,9 @@ With a free Apple ID the app stops launching after 7 days and you'll have to run
 
 ### 4. Start the server
 
-1. Unzip `mhotas-server-<version>-windows.zip` anywhere you like.
+1. Unzip `mhotas-server-<version>-windows.zip` anywhere you like. Keep all the files together in one
+   folder. The zip includes `SimConnect.dll`, the library the server uses to talk to MSFS, so you
+   don't need to install the MSFS SDK.
 2. Start MSFS 2024 and load into a flight.
 3. Double-click `start-mhotas.bat`. The first time, Windows Firewall will ask whether to allow
    mhotas-server on the network. Allow it on private networks, or the phone can't reach it.
@@ -138,6 +140,10 @@ modes on its own.
   X, Y, Z, Rz and 15 buttons.
 - Controls do nothing in the sim: check the bindings in MSFS are on the vJoy Device, not your keyboard
   or another controller profile.
+- The server logs an error about SimConnect.dll: `SimConnect.dll` has to be in the same folder as
+  `mhotas-server.exe`. Unzip the release again if it went missing.
+- The server stays on "Connecting" for SimConnect: MSFS has to be running. The server keeps retrying,
+  so you can start it before or after the sim.
 - If the phone loses connection mid-flight, pitch, roll and rudder go back to neutral after about half
   a second and the throttle stays where it was.
 
@@ -172,8 +178,15 @@ flutter test
 flutter run
 ```
 
+To run your own build against the sim you need `SimConnect.dll`. If the `SIMCONNECT_DLL`
+environment variable is set, the server uses that path. Otherwise it looks next to `mhotas-server.exe`,
+then in the usual MSFS 2024 SDK install folders. Installing the SDK from Developer Mode
+in MSFS is the simplest way to get it.
+
 Pushing a tag like `v0.1.0-alpha.1` builds the APK and the Windows server and attaches them to a
-GitHub release.
+GitHub release. `SimConnect.dll` isn't in this repo; the release workflow takes it from the
+`SIMCONNECT_DLL_B64` Actions secret, which holds the base64 of the DLL from the MSFS 2024 SDK
+(`C:\MSFS 2024 SDK\SimConnect SDK\lib\SimConnect.dll`).
 
 ## License
 
