@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/logo.svg" alt="mHOTAS logo" width="160"></p>
+
 # mHOTAS
 
 [![Go](https://github.com/Cris10Lobo/mhotas/actions/workflows/go.yml/badge.svg)](https://github.com/Cris10Lobo/mhotas/actions/workflows/go.yml)
