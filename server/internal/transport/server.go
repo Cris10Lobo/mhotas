@@ -1,10 +1,5 @@
-// Package transport owns the UDP socket: it turns incoming phone packets
-// into calibrated control.Output calls, tracks the connected phone's
-// address for pushing TELEMETRY/HEARTBEAT back, and runs the failsafe
-// timer.
-//
-// MVP supports a single active phone connection at a time, matching how
-// the closest prior art (Fly-By-Wireless) operates.
+// Package transport turns phone UDP packets into calibrated control.Output
+// calls and pushes telemetry back. Only one phone is served at a time.
 package transport
 
 import (
@@ -14,6 +9,7 @@ import (
 	"log/slog"
 	"math"
 	"net"
+	"strconv"
 	"sync"
 	"time"
 
@@ -23,18 +19,14 @@ import (
 	"mhotas/pkg/protocol"
 )
 
-// Server reads phone packets, drives a control.Output backend, and pushes
-// telemetry/heartbeats back to whichever phone last sent a valid HELLO.
 type Server struct {
 	conn       *net.UDPConn
 	backend    control.Output
 	log        *slog.Logger
-	configPath string // for config.Save on a live CONFIG_SET; "" = don't persist
+	configPath string // "" = CONFIG_SET isn't persisted
 
-	// cfg is mutated at runtime by CONFIG_SET (from the single-goroutine
-	// receive loop) and read concurrently by failsafeLoop (its own
-	// goroutine) — every access goes through axisConfig/currentConfig/
-	// setAxisConfig below, all mu-guarded.
+	// cfg is written by CONFIG_SET and read by failsafeLoop; access it only
+	// through the mu-guarded helpers below.
 	cfg config.Config
 
 	mu                sync.Mutex
@@ -49,15 +41,10 @@ type Server struct {
 	lastBackendWarnAt time.Time
 }
 
-// deviceLivenessTimeout mirrors the app's own UdpClient liveness check
-// (app/lib/network/udp_client.dart) — past this long since any valid packet
-// from the phone, Status() reports it disconnected rather than showing a
-// stale "still connected" from before a WiFi drop or the app closing.
+// deviceLivenessTimeout mirrors the app's UdpClient liveness check.
 const deviceLivenessTimeout = 3 * time.Second
 
-// Status is a point-in-time snapshot of what the server is doing right now
-// — for display (the TUI), not for control-flow decisions, which all live
-// on the fields above directly.
+// Status is a display snapshot for the TUI.
 type Status struct {
 	ListenAddr      string
 	DeviceName      string
@@ -76,13 +63,11 @@ func (s *Server) Status() Status {
 	}
 }
 
-// New starts listening on cfg.ListenPort. configPath is the file cfg was
-// loaded from (empty if none) — remembered so a live CONFIG_SET can persist
-// back to it; New itself never reads or writes the file again.
+// New starts listening on cfg.ListenPort. configPath is where CONFIG_SET
+// persists changes ("" to skip).
 func New(cfg config.Config, backend control.Output, log *slog.Logger, configPath string) (*Server, error) {
-	// "udp4", not "udp": phones connect via manual IPv4 entry, and an
-	// unspecified bind on Windows can land on the IPv6 wildcard, which
-	// WSL's IPv4 loopback forwarding can't reach ("connection refused").
+	// "udp4": an unspecified bind on Windows can land on the IPv6 wildcard,
+	// which WSL's IPv4 loopback forwarding can't reach.
 	conn, err := net.ListenUDP("udp4", &net.UDPAddr{Port: cfg.ListenPort})
 	if err != nil {
 		return nil, fmt.Errorf("transport: listen on port %d: %w", cfg.ListenPort, err)
@@ -103,10 +88,9 @@ func New(cfg config.Config, backend control.Output, log *slog.Logger, configPath
 	}, nil
 }
 
-// curve is the calibration curve transport itself applies. Throttle invert
-// is left out when the backend takes it over (control.SignedThrottleSetter):
-// the backend reverses the final output after its idle remap, which is
-// what invert has to mean when idle isn't at the axis center.
+// curve drops throttle invert when the backend applies it after its idle
+// remap (control.SignedThrottleSetter); inverting here would swap the
+// forward and reverse zones around idle.
 func (s *Server) curve(id control.AxisID, ac config.AxisConfig) calibration.Curve {
 	c := ac.Curve
 	if _, ok := s.backend.(control.SignedThrottleSetter); ok && id == control.AxisThrottle {
@@ -115,8 +99,6 @@ func (s *Server) curve(id control.AxisID, ac config.AxisConfig) calibration.Curv
 	return c
 }
 
-// axisConfig returns the current calibration for one axis. Mu-guarded since
-// CONFIG_SET can mutate cfg concurrently with failsafeLoop reading it.
 func (s *Server) axisConfig(id control.AxisID) config.AxisConfig {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -134,18 +116,14 @@ func (s *Server) axisConfig(id control.AxisID) config.AxisConfig {
 	}
 }
 
-// currentConfig returns a snapshot of the full config, e.g. to persist or
-// send back to the phone.
 func (s *Server) currentConfig() config.Config {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.cfg
 }
 
-// setAxisConfig applies new dead-zone/expo/invert/smoothing to one axis,
-// preserving that axis's existing Failsafe policy — CONFIG_SET never
-// touches Failsafe, which stays a config-file-only, operator judgment call.
-// Reports the axis's control.AxisID and whether the selector was valid.
+// setAxisConfig replaces one axis's calibration but keeps its Failsafe,
+// which is config-file-only.
 func (s *Server) setAxisConfig(axis protocol.ConfigAxis, ac config.AxisConfig) (control.AxisID, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -203,10 +181,7 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 }
 
-// safeHandlePacket recovers from a panic in handlePacket (a malformed
-// packet hitting an edge case in decode/calibration/backend code, say) so
-// one bad packet logs and gets dropped instead of taking the whole server
-// — and every pilot's control input — down mid-flight.
+// safeHandlePacket keeps one bad packet from killing the server mid-flight.
 func (s *Server) safeHandlePacket(addr *net.UDPAddr, data []byte) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -225,8 +200,6 @@ func (s *Server) handlePacket(addr *net.UDPAddr, data []byte) {
 	s.mu.Lock()
 	s.lastRxAt = time.Now()
 	s.mu.Unlock()
-	// Only HELLO gets a version-mismatch reply; other stray packets from an
-	// incompatible client are just dropped rather than acted on.
 	if hdr.Version != protocol.Version && hdr.Type != protocol.TypeHello {
 		s.log.Warn("dropping non-HELLO packet with version mismatch", "type", hdr.Type, "from", addr)
 		return
@@ -264,9 +237,6 @@ func (s *Server) handleHello(addr *net.UDPAddr, hdr protocol.Header, data []byte
 			"gotVersion", hdr.Version, "wantVersion", protocol.Version)
 	} else {
 		s.log.Info("phone connected", "device", hello.DeviceName, "from", addr)
-	}
-
-	if status == protocol.HelloOK {
 		s.mu.Lock()
 		s.clientAddr = addr
 		s.deviceName = hello.DeviceName
@@ -282,9 +252,6 @@ func (s *Server) handleHello(addr *net.UDPAddr, hdr protocol.Header, data []byte
 		s.log.Warn("failed to send HELLO_ACK", "err", err)
 	}
 
-	// Send current calibration right away so a freshly-opened settings
-	// screen shows real values instead of defaults — no separate
-	// CONFIG_GET request type needed for that.
 	if status == protocol.HelloOK {
 		if err := s.SendConfig(); err != nil {
 			s.log.Warn("failed to send CONFIG", "err", err)
@@ -317,13 +284,8 @@ func (s *Server) handleAxis(addr *net.UDPAddr, data []byte) {
 func (s *Server) applyAxis(id control.AxisID, raw float64, ac config.AxisConfig) {
 	shaped, changed := s.smooth(id, s.curve(id, ac).Apply(raw), ac.Smoothing)
 	if !changed {
-		// Value hasn't moved since the last packet — don't re-assert it.
-		// Without this, mhotas would resend the same throttle/rudder value
-		// to the backend 30-50x/sec regardless of what the sim itself is
-		// now showing, fighting any adjustment made directly in the sim
-		// (dragging the throttle with a mouse, autothrottle, etc.) within
-		// one packet interval. Pitch/roll are unaffected in practice —
-		// sensor noise means they essentially never repeat bit-for-bit.
+		// Re-sending an unchanged value would fight in-sim adjustments
+		// (mouse-dragged throttle, autothrottle) within one packet interval.
 		return
 	}
 	if err := s.backend.SetAxis(id, shaped); err != nil {
@@ -331,10 +293,7 @@ func (s *Server) applyAxis(id control.AxisID, raw float64, ac config.AxisConfig)
 	}
 }
 
-// backendWarnInterval throttles repeated backend-write-failure logging
-// (e.g. MSFS2024 not running yet) to once per interval instead of once per
-// call — AXIS packets arrive 30-50x/sec across 4 axes, which floods the log
-// within a second of the backend becoming unreachable.
+// backendWarnInterval rate-limits backend failure logs; AXIS arrives 30-50x/sec.
 const backendWarnInterval = 5 * time.Second
 
 func (s *Server) warnBackendFailure(msg string, args ...any) {
@@ -349,21 +308,11 @@ func (s *Server) warnBackendFailure(msg string, args ...any) {
 	}
 }
 
-// changeEpsilon is the tolerance smooth uses to decide an axis has
-// "settled". An EMA only asymptotically approaches its target — for any
-// smoothing > 0, exact float equality to the previous output is reached
-// only after enough iterations for the residual to underflow, so a steady
-// raw input would otherwise keep reporting changed=true (and re-fighting
-// any manual in-sim adjustment) for longer than intended after each move.
+// changeEpsilon: an EMA only approaches its target asymptotically, so exact
+// equality would keep reporting changes long after the input stopped moving.
 const changeEpsilon = 1e-6
 
-// smooth blends shaped with the previous call's result for this axis:
-// smoothing=0 returns shaped unchanged (default, no behavior change),
-// closer to 1 leans more on the previous value, damping a fast/jerky
-// swing into a gradual move instead of a raw spike. changed reports
-// whether the result differs meaningfully from the last value smooth
-// returned for this axis, so callers can skip re-sending an unchanged
-// value — see changeEpsilon for why this isn't exact equality.
+// smooth is an EMA; changed reports whether out moved beyond changeEpsilon.
 func (s *Server) smooth(id control.AxisID, shaped, smoothing float64) (out float64, changed bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -386,8 +335,7 @@ func (s *Server) handleButton(addr *net.UDPAddr, data []byte) {
 
 	s.mu.Lock()
 	last, seen := s.lastButtonEvent[btn.ButtonID]
-	// int16 subtraction handles the uint16 wraparound: if btn.EventID is
-	// "ahead of" last in circular sequence terms, the difference is positive.
+	// int16 difference handles uint16 wraparound.
 	isNewer := !seen || int16(btn.EventID-last) > 0
 	if isNewer {
 		s.lastButtonEvent[btn.ButtonID] = btn.EventID
@@ -401,16 +349,9 @@ func (s *Server) handleButton(addr *net.UDPAddr, data []byte) {
 		s.warnBackendFailure("backend SetButton failed", "button", btn.ButtonID, "err", err)
 		return
 	}
-	// Buttons are rare, discrete events (unlike the 30Hz AXIS stream), so
-	// logging every one isn't spam — it's the only way to see a press
-	// actually reached and succeeded, since backends stay silent on success.
 	s.log.Info("button", "id", btn.ButtonID, "pressed", btn.Pressed)
 }
 
-// handleConfigSet applies a phone-edited dead-zone/expo/invert/smoothing to
-// one axis, persists it (if a config file path is known), and echoes back
-// the full CONFIG snapshot so the phone's settings screen shows exactly
-// what's now in effect.
 func (s *Server) handleConfigSet(addr *net.UDPAddr, data []byte) {
 	if !s.isCurrentClient(addr) {
 		s.log.Warn("dropping CONFIG_SET from non-established address", "from", addr)
@@ -421,29 +362,23 @@ func (s *Server) handleConfigSet(addr *net.UDPAddr, data []byte) {
 		s.log.Warn("bad CONFIG_SET", "err", err, "from", addr)
 		return
 	}
-	// DeadZone/Expo/Smoothing are only ever meaningful in [0,1] — Curve.Apply
-	// only guards DeadZone>=1, so an out-of-range value from the wire (a
-	// stale app build, a malformed packet) needs clamping here, the actual
-	// trust boundary, rather than trusted to already be sane.
+	// Clamp at the trust boundary; Curve.Apply only guards DeadZone>=1.
+	cal := cs.Calibration
 	ac := config.AxisConfig{
 		Curve: calibration.Curve{
-			DeadZone: clamp01(float64(cs.Calibration.DeadZone)),
-			Expo:     clamp01(float64(cs.Calibration.Expo)),
-			Invert:   cs.Calibration.Invert,
+			DeadZone: clamp01(widen(cal.DeadZone)),
+			Expo:     clamp01(widen(cal.Expo)),
+			Invert:   cal.Invert,
 		},
-		Smoothing:          clamp01(float64(cs.Calibration.Smoothing)),
-		SignedThrottle:     cs.Calibration.SignedThrottle,
-		SignedThrottleIdle: clampSigned(float64(cs.Calibration.SignedThrottleIdle)),
+		Smoothing:          clamp01(widen(cal.Smoothing)),
+		SignedThrottle:     cal.SignedThrottle,
+		SignedThrottleIdle: clampSigned(widen(cal.SignedThrottleIdle)),
 	}
 	id, ok := s.setAxisConfig(cs.Axis, ac)
 	if !ok {
 		s.log.Warn("bad CONFIG_SET axis", "axis", cs.Axis, "from", addr)
 		return
 	}
-	// Only throttle's driver has anything to switch (see
-	// control.SignedThrottleSetter) — a no-op type-assertion failure for
-	// every other axis and every backend without a throttle driver that
-	// cares (logbackend, vjoy).
 	if id == control.AxisThrottle {
 		if setter, ok := s.backend.(control.SignedThrottleSetter); ok {
 			setter.SetSignedThrottle(ac.SignedThrottle)
@@ -462,10 +397,6 @@ func (s *Server) handleConfigSet(addr *net.UDPAddr, data []byte) {
 	}
 }
 
-// handleConfigGet replies with the current CONFIG snapshot — a settings
-// screen that mounts after the one unprompted post-HELLO_ACK CONFIG already
-// fired (and was missed, since nothing has a "last value" buffer for it the
-// way TELEMETRY's recurring stream implicitly does) sends this to catch up.
 func (s *Server) handleConfigGet(addr *net.UDPAddr) {
 	if !s.isCurrentClient(addr) {
 		s.log.Warn("dropping CONFIG_GET from non-established address", "from", addr)
@@ -476,42 +407,27 @@ func (s *Server) handleConfigGet(addr *net.UDPAddr) {
 	}
 }
 
-func clamp01(v float64) float64 {
-	if math.IsNaN(v) {
-		return 0
-	}
-	if v < 0 {
-		return 0
-	}
-	if v > 1 {
-		return 1
-	}
+// widen converts a wire float32 to float64 via its shortest decimal form, so
+// 0.05 is saved to config.json as 0.05 rather than 0.05000000074505806.
+func widen(f float32) float64 {
+	v, _ := strconv.ParseFloat(strconv.FormatFloat(float64(f), 'g', -1, 32), 64)
 	return v
 }
 
-// clampSigned is clamp01's -1..1 counterpart, for SignedThrottleIdle — a
-// wire value, same trust-boundary reasoning as clamp01.
-func clampSigned(v float64) float64 {
+func clamp01(v float64) float64 { return clampRange(v, 0, 1) }
+
+func clampSigned(v float64) float64 { return clampRange(v, -1, 1) }
+
+func clampRange(v, lo, hi float64) float64 {
 	if math.IsNaN(v) {
 		return 0
 	}
-	if v < -1 {
-		return -1
-	}
-	if v > 1 {
-		return 1
-	}
-	return v
+	return max(lo, min(hi, v))
 }
 
-// SendTelemetry pushes a TELEMETRY packet to the currently connected phone,
-// if any. Safe to call with no phone connected (no-op).
-//
-// ThrottlePercent is the sim's lever, which is the throttle curve's output;
-// it's mapped back to the curve's input before sending, so the phone's
-// lever shows the position that produces it and a drag from there sends
-// the same value. Without that, a nonzero expo/dead zone made the lever
-// jump on every sync.
+// SendTelemetry is a no-op with no phone connected. ThrottlePercent is the
+// throttle curve's output, so it is mapped back through the curve's inverse;
+// otherwise a nonzero expo/dead zone made the phone's lever jump on every sync.
 func (s *Server) SendTelemetry(t protocol.Telemetry) error {
 	addr := s.currentClient()
 	if addr == nil {
@@ -523,8 +439,7 @@ func (s *Server) SendTelemetry(t protocol.Telemetry) error {
 	return err
 }
 
-// SendConfig pushes the current calibration to the connected phone, if any
-// — sent right after HELLO_ACK and again after every applied CONFIG_SET.
+// SendConfig pushes the current calibration to the connected phone, if any.
 func (s *Server) SendConfig() error {
 	addr := s.currentClient()
 	if addr == nil {
@@ -557,12 +472,8 @@ func (s *Server) currentClient() *net.UDPAddr {
 	return s.clientAddr
 }
 
-// isCurrentClient reports whether addr matches the address that most
-// recently completed a HELLO handshake — AXIS/BUTTON packets are only
-// applied to the backend from that established session, not from any
-// device that happens to send a well-formed packet to this port. Without
-// this, a second phone (or a stray/replayed packet) on the same network
-// could apply control input alongside, or instead of, the connected pilot.
+// isCurrentClient keeps a second phone or stray packet on the network from
+// injecting control input alongside the connected pilot.
 func (s *Server) isCurrentClient(addr *net.UDPAddr) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -632,11 +543,9 @@ func (s *Server) checkFailsafe(timeout time.Duration) {
 
 func (s *Server) applyFailsafe(id control.AxisID, ac config.AxisConfig) {
 	if ac.Failsafe != config.FailsafeNeutral {
-		return // hold: do nothing, the backend already retains its last value
+		return
 	}
-	// Reset smoothing state too, so the next real AXIS packet doesn't ramp
-	// up from the stale pre-failsafe value instead of the neutral it's
-	// actually starting from.
+	// Reset smoothing so the next AXIS doesn't ramp from the stale value.
 	s.mu.Lock()
 	s.lastShaped[id] = 0
 	s.mu.Unlock()

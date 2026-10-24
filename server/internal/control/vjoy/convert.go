@@ -1,5 +1,4 @@
-// No build tag, unlike the Windows-only Backend: the range math is
-// unit-testable anywhere.
+// No build tag, unlike Backend, so the range math is testable on any OS.
 package vjoy
 
 import (
@@ -14,15 +13,11 @@ func toRaw(v float64, max int32) int32 {
 	return int32(math.Round((v + 1) / 2 * float64(max)))
 }
 
-// throttleToRaw follows the same two reverse-thrust conventions the
-// SimConnect backend has, with the same idle remap (control.RemapIdle).
-// Signed: -1..1 across the whole axis with idle at idlePoint — the
-// operator's signed_throttle_idle, since where idle falls on the axis is
-// set by the aircraft and the MSFS binding (e.g. a detented airliner whose
-// idle is a quarter of the way up). Unsigned (default): the magnitude
-// across the whole axis, idle at 0, with reverse carried separately by the
-// reverse-hold button. invert reverses the final axis position (see
-// control.SignedThrottleSetter.SetThrottleInvert).
+// throttleToRaw: signed spans -1..1 over the whole axis with idle at
+// idlePoint (the aircraft and MSFS binding decide where idle falls).
+// Unsigned maps the magnitude with idle at 0; reverse is the separate
+// reverse-hold button. invert mirrors the final axis position, after the
+// idle remap.
 func throttleToRaw(v float64, signed bool, idlePoint float64, invert bool, max int32) int32 {
 	r := control.RemapIdle(math.Abs(v), -1)
 	if signed {

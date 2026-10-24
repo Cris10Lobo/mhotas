@@ -14,24 +14,17 @@ import (
 	"mhotas/internal/simlink"
 )
 
-// Driver kinds this backend's factory understands. A config.ControlMapping
-// naming any other Driver value fails at Backend construction — see
-// buildAxisDriver/buildButtonDriver.
 const (
-	driverKEvent      = "kevent"       // generic named K:EVENT, see simlink.Client.TransmitNamed
-	driverInputEvent  = "input_event"  // MSFS2024 Input Event, see simlink.Client.SetInputEvent
-	driverThrottleEx1 = "throttle_ex1" // idle-range throttle; reverse convention switchable live, see throttleEx1Driver
-	driverToeBrake    = "toe_brake"    // momentary, needs both press and release
-	driverPauseToggle = "pause_toggle" // explicit target computed from Client.Paused(), not a bare toggle
-	driverSpoilerArm  = "spoiler_arm"  // explicit target computed from the SPOILERS ARMED readback
-	driverReverseArm  = "reverse_arm"  // momentary; shares Client.SetReverseArmed's state with throttleEx1Driver
+	driverKEvent      = "kevent"
+	driverInputEvent  = "input_event"
+	driverThrottleEx1 = "throttle_ex1"
+	driverToeBrake    = "toe_brake"
+	driverPauseToggle = "pause_toggle"
+	driverSpoilerArm  = "spoiler_arm"
+	driverReverseArm  = "reverse_arm"
 )
 
-// defaultMappings is every control this backend drives today, expressed as
-// the same declarative data a server.config.json "controls" override would
-// use — moved out of imperative case branches, not preserved as a separate
-// hardcoded path. An empty/absent config.Config.Controls reproduces this
-// exactly.
+// defaultMappings is the per-control driver table that config "controls" overrides by name.
 func defaultMappings() map[string]config.ControlMapping {
 	return map[string]config.ControlMapping{
 		"pitch":    {Driver: driverKEvent, Event: "AXIS_ELEVATOR_SET", Invert: true},
@@ -52,22 +45,16 @@ func defaultMappings() map[string]config.ControlMapping {
 		"trim_up":              {Driver: driverKEvent, Event: "ELEV_TRIM_UP"},
 		"trim_down":            {Driver: driverKEvent, Event: "ELEV_TRIM_DN"},
 
-		// Nudge-throttle fallback (app's +/- buttons + reverse-arm hold):
-		// relative to the sim's own current engine state via the same
-		// standard SimConnect events F2/F3 use, not an absolute position on
-		// any aircraft-specific calibrated scale — unlike the "throttle"
-		// axis above, this is the same on every aircraft.
+		// Nudge throttle is relative to the engine's current state, so unlike
+		// the "throttle" axis it behaves the same on every aircraft.
 		"throttle_incr":        {Driver: driverKEvent, Event: "INCREASE_THROTTLE"},
 		"throttle_decr":        {Driver: driverKEvent, Event: "DECREASE_THROTTLE"},
 		"throttle_reverse_arm": {Driver: driverReverseArm},
 	}
 }
 
-// buildMappedOutput resolves the effective control mapping (defaults
-// overridden per-name by overrides) into a control.MappedOutput, via this
-// backend's driver factory. Fails closed: an override naming an
-// unrecognized control or driver kind is a config error, surfaced at
-// startup rather than silently ignored.
+// buildMappedOutput applies overrides on top of defaultMappings. An unknown
+// control or driver name is an error rather than silently ignored.
 func buildMappedOutput(client *simlink.Client, log *slog.Logger, overrides map[string]config.ControlMapping) (*control.MappedOutput, error) {
 	effective := defaultMappings()
 	maps.Copy(effective, overrides)
@@ -143,11 +130,9 @@ func buildButtonDriver(client *simlink.Client, m config.ControlMapping) (control
 	}
 }
 
-// kEventAxisDriver fires a generic named K:EVENT with a linearly-scaled
-// axis value — the shape of every axis this project drives except
-// throttle (see throttleEx1Driver). invert flips the value before scaling,
-// for events like AXIS_ELEVATOR_SET whose positive direction doesn't match
-// mHOTAS's own "positive = climb" convention.
+// kEventAxisDriver fires a named K:EVENT with the value scaled linearly.
+// invert exists because AXIS_ELEVATOR_SET's positive direction is opposite
+// mHOTAS's "positive = climb".
 type kEventAxisDriver struct {
 	client *simlink.Client
 	event  string
@@ -161,9 +146,7 @@ func (d *kEventAxisDriver) SetAxis(value float64) error {
 	return d.client.TransmitNamed(d.event, uint32(toAxisRange(value)))
 }
 
-// kEventButtonDriver fires a generic named K:EVENT on press, ignoring
-// release — the shape of every button this project drives except toe
-// brake (momentary), pause/spoiler-arm (explicit-value, not fire-and-forget).
+// kEventButtonDriver fires a named K:EVENT on press and ignores release.
 type kEventButtonDriver struct {
 	client *simlink.Client
 	event  string
@@ -177,25 +160,14 @@ func (d *kEventButtonDriver) SetButton(pressed bool) error {
 }
 
 // throttleEx1Driver drives THROTTLE_AXIS_SET_EX1 under one of two
-// conventions, switchable live (SetSignedThrottle/SetSignedThrottleIdle, via
-// the phone's Settings screen and CONFIG_SET) rather than fixed at
-// construction, since which one's correct — and where "idle" falls on the
-// signed scale — depends on the aircraft currently loaded, not anything
-// knowable when the backend was built:
+// conventions, switchable live because the right one depends on the loaded
+// aircraft:
 //
-//   - Default (signed=false): arm/disarm reverse via SetReverseArmed on a
-//     sign transition, then send the same idle..full raw magnitude either
-//     way — confirmed correct via an Asobo developer forum post
-//     (devsupport.flightsimulator.com/t/throttle-set-event-ids-explanation/
-//     4571). Once armed, MSFS applies that magnitude as negative (reverse)
-//     power internally; this mode never sends a negative raw value itself.
-//   - Signed (signed=true): send one continuous raw signed axis, no arm
-//     event at all, via toSignedThrottleRaw (see its own doc comment) —
-//     some aircraft's own throttle-calibration systems expect this instead
-//     of the arm-toggle dance. idlePoint defaults to 0 (no remap, identity
-//     mapping) and is a plain tunable, not a guessed constant — this
-//     project has no way to know where a given aircraft's own calibration
-//     puts "idle" on that scale.
+//   - Default: arm/disarm reverse via SetReverseArmed on a sign transition,
+//     then send the same idle..full magnitude either way; MSFS applies it as
+//     reverse power once armed.
+//   - Signed: one continuous signed axis with no arm event, idle remapped to
+//     idlePoint (a per-aircraft tunable, 0 = identity).
 type throttleEx1Driver struct {
 	client *simlink.Client
 	log    *slog.Logger
@@ -208,10 +180,9 @@ type throttleEx1Driver struct {
 
 func (d *throttleEx1Driver) SetSignedThrottle(signed bool) { d.signed.Store(signed) }
 
-// SetThrottleInvert is deliberately a no-op. Throttle invert exists to
-// undo a reversed MSFS axis binding, and SimConnect events go through no
-// binding — honoring a value tuned for vJoy here turned phone idle into up
-// to full power when switching input modes with the same config.
+// SetThrottleInvert is a no-op: invert undoes a reversed MSFS axis binding,
+// which SimConnect events bypass. Honoring a vJoy-tuned value here turned
+// idle into up to full power.
 func (d *throttleEx1Driver) SetThrottleInvert(bool) {}
 
 func (d *throttleEx1Driver) SetSignedThrottleIdle(idle float64) {
@@ -239,8 +210,7 @@ func (d *throttleEx1Driver) SetAxis(value float64) error {
 	return d.client.SetThrottle(toSignedThrottleRaw(magnitude, stockIdlePoint, simlink.AxisRange))
 }
 
-// toeBrakeDriver is momentary (apply while held, release on lift), unlike
-// the press-only kevent buttons — it needs the release edge.
+// toeBrakeDriver applies while held and releases on lift.
 type toeBrakeDriver struct {
 	client *simlink.Client
 }
@@ -249,10 +219,7 @@ func (d *toeBrakeDriver) SetButton(pressed bool) error {
 	return d.client.SetToeBrakes(pressed)
 }
 
-// reverseArmDriver is the nudge-throttle fallback's hold-to-arm reverse
-// button — momentary, like toeBrakeDriver, but through
-// Client.SetReverseArmed rather than a bare toggle, so it can't desync from
-// throttleEx1Driver's own arm calls on the lever (see Client.SetReverseArmed).
+// reverseArmDriver arms reverse while held, via the shared SetReverseArmed state.
 type reverseArmDriver struct {
 	client *simlink.Client
 }
@@ -261,9 +228,7 @@ func (d *reverseArmDriver) SetButton(pressed bool) error {
 	return d.client.SetReverseArmed(pressed)
 }
 
-// pauseToggleDriver fires on press only, flipping whatever SimConnect's own
-// Pause system event last reported (Client.Paused()) rather than a locally-
-// tracked guess — PAUSE_SET needs an explicit target, not a toggle.
+// pauseToggleDriver flips the sim's reported pause state on press.
 type pauseToggleDriver struct {
 	client *simlink.Client
 }
@@ -275,11 +240,8 @@ func (d *pauseToggleDriver) SetButton(pressed bool) error {
 	return d.client.SetPause(!d.client.Paused())
 }
 
-// spoilerArmDriver fires on press only, sending the opposite of the sim's
-// actual SPOILERS ARMED state as an explicit value (SPOILERS_ARM_SET, see
-// simlink.Client.SetSpoilersArmed) — same read-the-truth approach as
-// pauseToggleDriver, so a change made in the sim can't leave it out of
-// step. Before any telemetry has arrived it can only guess: arm.
+// spoilerArmDriver flips the sim's reported SPOILERS ARMED state on press;
+// before any telemetry arrives it arms.
 type spoilerArmDriver struct {
 	client *simlink.Client
 }
@@ -292,11 +254,8 @@ func (d *spoilerArmDriver) SetButton(pressed bool) error {
 	return d.client.SetSpoilersArmed(state.SpoilersArmed == 0)
 }
 
-// inputEventAxisDriver writes a DOUBLE-typed MSFS2024 Input Event by name,
-// resolving it against the current session's enumeration on every call
-// (never cached across reconnects/aircraft changes — see
-// simlink.Client.SetInputEvent). Fire-and-forget, same as the kevent path:
-// no confirmation the write actually landed.
+// inputEventAxisDriver writes a DOUBLE Input Event by name, resolved per call
+// because hashes don't survive reconnects.
 type inputEventAxisDriver struct {
 	client *simlink.Client
 	name   string
@@ -306,8 +265,7 @@ func (d *inputEventAxisDriver) SetAxis(value float64) error {
 	return d.client.SetInputEvent(d.name, value)
 }
 
-// inputEventButtonDriver is inputEventAxisDriver's button-shaped
-// counterpart: fires on press only, writing 1.0/0.0.
+// inputEventButtonDriver writes 1.0 on press, ignoring release.
 type inputEventButtonDriver struct {
 	client *simlink.Client
 	name   string

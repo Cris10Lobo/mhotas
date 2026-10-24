@@ -25,7 +25,7 @@ jobs:
         run: go build ./...
 
   # internal/control/simconnect, internal/control/vjoy, internal/telemetry's real
-  # source, and internal/simlink carry //go:build windows — cross-compile them here
+  # source, and internal/simlink carry //go:build windows; cross-compile them here
   # since the job above silently skips them on Linux.
   server-windows:
     runs-on: ubuntu-latest

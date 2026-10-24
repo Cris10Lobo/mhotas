@@ -1,7 +1,4 @@
-// Package logbackend implements control.Output by logging every call
-// instead of driving a simulator. It lets the transport, protocol, and
-// calibration layers be developed and tested without MSFS running at all,
-// and doubles as a permanent --backend=log debug flag.
+// Package logbackend is a control.Output that only logs, for --backend=log.
 package logbackend
 
 import (
@@ -30,8 +27,6 @@ func (b *Backend) SetButton(id control.ButtonID, pressed bool) error {
 	return nil
 }
 
-// Ready is always true — there's no external connection to be ready for,
-// logging always "works".
 func (b *Backend) Ready() bool { return true }
 
 func (b *Backend) Close() error { return nil }

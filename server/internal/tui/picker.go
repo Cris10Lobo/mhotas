@@ -12,8 +12,6 @@ var inputOptions = []struct{ value, label string }{
 	{"simconnect", "SimConnect  all input through SimConnect events, no vJoy"},
 }
 
-// ErrCancelled is returned by PickInput when the user quits instead of
-// choosing.
 var ErrCancelled = errors.New("cancelled")
 
 type picker struct {

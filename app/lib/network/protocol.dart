@@ -1,8 +1,5 @@
-// Dart mirror of the mHOTAS wire protocol defined in docs/protocol.md.
-// Both the Flutter app and the Go server hand-implement against that
-// document — there is no shared codegen. If you change a packet layout,
-// update docs/protocol.md and server/pkg/protocol/protocol.go in the same
-// change.
+// Hand-written mirror of server/pkg/protocol/protocol.go and docs/protocol.md.
+// Change all three together.
 library;
 
 import 'dart:convert';
@@ -73,10 +70,7 @@ String _decodeName(Uint8List field) {
 
 const int axisPacketSize = headerSize + 16;
 
-/// Continuous stick/throttle/rudder position. No dead-zone or curve is
-/// applied before sending — that shaping is server-side — but the
-/// recenter/zero offset (see AttitudeStream) is applied before
-/// normalizing, since that corrects for physical grip, not sim response.
+/// Stick/throttle/rudder position; only the recenter offset is applied phone-side.
 class Axis {
   final double pitch; // -1..1
   final double roll; // -1..1
@@ -118,9 +112,7 @@ Axis decodeAxis(Uint8List b) {
 
 const int buttonPacketSize = headerSize + 4;
 
-/// A single discrete button press/release event. The app sends each event
-/// 3x in quick succession so a dropped UDP packet doesn't lose it — see
-/// UdpClient.sendButton — and the server de-dupes by eventId.
+/// One press/release event; the server dedupes the redundant sends by eventId.
 class Button {
   final int buttonId;
   final bool pressed;
@@ -213,8 +205,7 @@ class GearPosition {
 
 const int telemetryPacketSize = headerSize + 22;
 
-/// Bits packed into Telemetry's wire byte 13 (was a plain "reserved, must
-/// be 0" byte through protocol v6 — see docs/protocol.md).
+/// Bits of Telemetry wire byte 13.
 class _TelemetryFlags {
   static const int stallWarning = 1 << 0;
   static const int onGround = 1 << 1;
@@ -223,41 +214,29 @@ class _TelemetryFlags {
   static const int autothrottleActive = 1 << 4;
 }
 
-/// Live aircraft state read from SimConnect, pushed server → phone. A fixed
-/// small struct rather than a generic key/value simvar schema.
-///
-/// Every field here exists to close a "double lane" gap for something the
-/// phone can also command or display: an in-sim change (mouse, keyboard,
-/// autothrottle, the Esc key, another control) should show up here instead
-/// of the app silently holding a stale value or guessing state locally.
+/// Live aircraft state read from SimConnect, pushed server to phone.
 class Telemetry {
   final int flapHandleIndex;
   final int flapHandleIndexMax;
   final int gearPosition;
 
-  /// The sim's actual current parking brake state, independent of this
-  /// app's own button-tap history.
+  /// The sim's actual parking brake state.
   final bool parkingBrakeSet;
 
-  /// The sim's actual current throttle lever position (-1..1, negative =
-  /// reverse), independent of whatever the phone last commanded. Used to
-  /// mirror the throttle lever widget while the pilot isn't touching it,
-  /// instead of silently holding a stale value.
+  /// The sim's actual throttle lever position, -1..1, negative = reverse.
   final double throttlePercent;
 
-  /// The sim's actual current pause state, from SimConnect's own Pause
-  /// system event — not a guess based on this app's last PAUSE tap, which
-  /// can't see an external pause/unpause.
+  /// The sim's actual pause state, including external pauses.
   final bool paused;
 
-  /// SimConnect's STALL WARNING — drives the stick-shaker haptic.
+  /// SimConnect's STALL WARNING, drives the stick-shaker haptic.
   final bool stallWarning;
 
-  /// SimConnect's SIM ON GROUND — gates the taxi/ground-roll rumble haptic
+  /// SimConnect's SIM ON GROUND, gates the taxi/ground-roll rumble haptic
   /// so it never fires airborne.
   final bool onGround;
 
-  /// SimConnect's GROUND VELOCITY, knots — drives the taxi/ground-roll
+  /// SimConnect's GROUND VELOCITY, knots, drives the taxi/ground-roll
   /// rumble's pulse rate. Meaningless while [onGround] is false.
   final double groundSpeedKnots;
 
@@ -271,8 +250,7 @@ class Telemetry {
 
   final bool autopilotMaster;
 
-  /// The sim's autothrottle is driving the throttle — shown as an A/T badge
-  /// on the throttle lever.
+  /// The sim's autothrottle is driving the throttle.
   final bool autothrottleActive;
 
   const Telemetry({
@@ -319,8 +297,7 @@ Telemetry decodeTelemetry(Uint8List b) {
 
 // ---- CONFIG (0x07) / CONFIG_SET (0x08) ----
 
-/// Selects which axis a CONFIG_SET applies to. Failsafe policy isn't
-/// included — it stays a server-config-file-only, operator judgment call.
+/// Which axis a CONFIG_SET applies to.
 class ConfigAxis {
   static const int pitch = 0;
   static const int roll = 1;
@@ -330,12 +307,8 @@ class ConfigAxis {
 
 const int _axisCalibrationSize = 18;
 
-/// Dead-zone/expo/invert/smoothing for one axis — everything about it the
-/// phone can see and edit. Mirrors server/internal/calibration.Curve plus
-/// the smoothing factor. [signedThrottle]/[signedThrottleIdle] only mean
-/// anything on the throttle axis (see settings_screen.dart's throttle-only
-/// controls) — carried on every axis to keep one shared wire block, harmless
-/// no-op for pitch/roll/rudder.
+/// [signedThrottle]/[signedThrottleIdle] only mean anything on the throttle
+/// axis; they ride in every axis block to keep one shared wire layout.
 class AxisCalibration {
   final double deadZone;
   final double expo;
@@ -376,9 +349,7 @@ AxisCalibration _decodeAxisCalibration(ByteData bd, int offset) {
 
 const int configPacketSize = headerSize + 4 * _axisCalibrationSize;
 
-/// The server's current calibration for every axis — pushed server → phone
-/// right after HELLO_ACK and again after every CONFIG_SET is applied, the
-/// same "full snapshot, not a diff" approach TELEMETRY already uses.
+/// Full calibration snapshot, pushed after HELLO_ACK and after every CONFIG_SET.
 class Config {
   final AxisCalibration pitch;
   final AxisCalibration roll;
@@ -408,10 +379,9 @@ Config decodeConfig(Uint8List b) {
 
 const int configSetPacketSize = headerSize + 1 + _axisCalibrationSize;
 
-/// Sent phone → server to change one axis's calibration. The server replies
-/// with a fresh CONFIG once applied — there's no separate ack packet type.
+/// Changes one axis's calibration; the reply is a fresh CONFIG.
 class ConfigSet {
-  final int axis; // ConfigAxis.*
+  final int axis;
   final AxisCalibration calibration;
 
   const ConfigSet({required this.axis, required this.calibration});
@@ -427,10 +397,6 @@ Uint8List encodeConfigSet(int seq, ConfigSet cs) {
 
 const int configGetPacketSize = headerSize;
 
-/// Sent by the app when a settings screen opens, so it gets the server's
-/// current calibration even if it missed the one CONFIG pushed unprompted
-/// right after HELLO_ACK (unlike TELEMETRY, CONFIG isn't sent on a
-/// recurring timer, so a late subscriber has nothing to fall back on
-/// without this).
+/// CONFIG is not periodic, so a late subscriber needs this to get a snapshot.
 Uint8List encodeConfigGet(int seq) =>
     _newPacket(PacketType.configGet, seq, configGetPacketSize);

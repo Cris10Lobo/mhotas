@@ -17,13 +17,8 @@ import (
 	"mhotas/internal/telemetry"
 )
 
-// newBackend also returns the telemetry starter for the SimConnect
-// connection it opened (nil for log).
-//
-// The two input modes are separate, with no fallback between them:
-// "simconnect" writes through SimConnect events; "vjoy" writes only to the
-// vJoy device and keeps a SimConnect connection purely to read telemetry.
-// If vJoy can't drive every control, startup fails with what to fix.
+// newBackend's telemetry starter is nil for the log backend. The vjoy and
+// simconnect input modes never fall back to each other.
 func newBackend(ctx context.Context, name, input string, log *slog.Logger, cfg config.Config) (control.Output, startTelemetryFunc, error) {
 	switch {
 	case name == "log":
@@ -47,8 +42,7 @@ func newBackend(ctx context.Context, name, input string, log *slog.Logger, cfg c
 	}
 }
 
-// telemetryStarter streams sim state to the phone and, if syncer is
-// non-nil, feeds it the sim's throttle (vJoy, which holds its last value).
+// syncer (vJoy only) is fed the sim's throttle because a vJoy axis holds its last value.
 func telemetryStarter(ctx context.Context, client *simlink.Client, syncer control.ThrottleSyncer, log *slog.Logger) startTelemetryFunc {
 	return func(sink telemetry.Sink) {
 		src, err := telemetry.NewSource(client, syncer)

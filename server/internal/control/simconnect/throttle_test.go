@@ -19,7 +19,7 @@ func TestToSignedThrottleRaw(t *testing.T) {
 		{value: -2, idlePoint: -0.5, want: -16383},   // clamps
 
 		// stockIdlePoint (-1): the arm-toggle convention's fixed mapping,
-		// what used to be a separate toThrottleRaw function — idle at the
+		// what used to be a separate toThrottleRaw function, idle at the
 		// negative extreme, midpoint NOT idle.
 		{value: 0, idlePoint: stockIdlePoint, want: -16383}, // idle
 		{value: 1, idlePoint: stockIdlePoint, want: 16383},  // full power

@@ -3,10 +3,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 const _prefsManualJoystickKey = 'mhotas.manualJoystick.enabled';
 
-/// Whether the on-screen 2D joystick drives pitch/roll instead of the tilt
-/// sensor. Persisted the same way connect_screen.dart persists host/port —
-/// SharedPreferences, no backend involved, since this is a phone-only UI
-/// choice rather than something the sim needs to know about.
+/// Whether the on-screen joystick drives pitch/roll instead of the tilt sensor.
 class ManualJoystickNotifier extends StateNotifier<bool> {
   ManualJoystickNotifier() : super(false) {
     _load();
@@ -31,10 +28,7 @@ final manualJoystickProvider =
 
 const _prefsNudgeThrottleKey = 'mhotas.nudgeThrottle.enabled';
 
-/// Whether the throttle control is +/- nudge buttons (plus a hold-for-
-/// reverse button) instead of the drag lever — a fallback for phones/
-/// aircraft where the lever is hard to use precisely. Same persistence
-/// pattern as [ManualJoystickNotifier].
+/// Whether throttle is +/- nudge buttons (plus hold-for-reverse) instead of the lever.
 class NudgeThrottleNotifier extends StateNotifier<bool> {
   NudgeThrottleNotifier() : super(false) {
     _load();

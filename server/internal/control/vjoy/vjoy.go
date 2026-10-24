@@ -1,13 +1,8 @@
 //go:build windows
 
-// Package vjoy implements control.Output by driving a vJoy virtual
-// joystick. It writes only: what each vJoy axis/button does in the sim is
-// whatever the user bound it to in MSFS's controls menu, and reading state
-// back is telemetry's job, over SimConnect.
-//
-// The mapping is fixed rather than configurable — the MSFS binding is where
-// a user decides what an input means, so remapping here too would just be
-// a second place to get it wrong. vJoy button N is control.ButtonID N.
+// Package vjoy implements control.Output on a vJoy virtual joystick. The
+// mapping is fixed (meaning is set by the MSFS binding); button N is
+// control.ButtonID N.
 package vjoy
 
 import (
@@ -21,7 +16,7 @@ import (
 	"mhotas/internal/vjoylink"
 )
 
-// ponytail: single hardcoded device — one phone, one PC.
+// ponytail: single hardcoded device; one phone, one PC.
 const deviceID = 1
 
 var axisUsage = map[control.AxisID]uint32{
@@ -35,8 +30,7 @@ var axisLetter = map[uint32]string{
 	vjoylink.AxisX: "X", vjoylink.AxisY: "Y", vjoylink.AxisZ: "Z", vjoylink.AxisRZ: "Rz",
 }
 
-// Sim is the SimConnect read connection vJoy mode keeps open for
-// telemetry. The backend only reports its readiness and closes it.
+// Sim is the SimConnect connection kept open for telemetry; Backend owns closing it.
 type Sim interface {
 	Ready() bool
 	Close() error
@@ -59,8 +53,7 @@ type Backend struct {
 	reverseHeld bool
 }
 
-// New acquires vJoy device 1, which must have every axis and button
-// mHOTAS drives — a missing one is a startup error, not a silent gap.
+// New acquires vJoy device 1, failing if any axis or button we drive is missing.
 func New(log *slog.Logger, sim Sim) (*Backend, error) {
 	if err := vjoylink.Enabled(); err != nil {
 		return nil, fmt.Errorf("vjoy: %w", err)
@@ -68,8 +61,7 @@ func New(log *slog.Logger, sim Sim) (*Backend, error) {
 	if err := vjoylink.Acquire(deviceID); err != nil {
 		return nil, fmt.Errorf("vjoy: %w", err)
 	}
-	// A previous crashed session may have left a button held. Not ResetVJD:
-	// that recenters every axis, which MSFS would apply as real input.
+	// A crashed session may have left a button held.
 	vjoylink.ReleaseButtons(deviceID)
 
 	b := &Backend{sim: sim, axes: map[control.AxisID]axis{}}
@@ -87,7 +79,7 @@ func New(log *slog.Logger, sim Sim) (*Backend, error) {
 	}
 	if len(missing) > 0 {
 		vjoylink.Relinquish(deviceID)
-		return nil, fmt.Errorf("vjoy device %d needs %s — enable them in vJoyConf, or run with --input=simconnect",
+		return nil, fmt.Errorf("vjoy device %d needs %s: enable them in vJoyConf, or run with --input=simconnect",
 			deviceID, strings.Join(missing, ", "))
 	}
 	for id := control.ButtonGear; id <= control.ButtonThrottleReverseArm; id++ {
@@ -109,10 +101,7 @@ func (b *Backend) SetAxis(id control.AxisID, value float64) error {
 	return b.writeThrottle(value)
 }
 
-// SyncThrottle implements control.ThrottleSyncer: moves the vJoy throttle
-// to the sim's actual lever position when the sim changed it some other
-// way — see throttleSync. MSFS receives the position it already has, so
-// nothing moves in the sim.
+// SyncThrottle implements control.ThrottleSyncer.
 func (b *Backend) SyncThrottle(sim float64, autothrottle bool) {
 	b.throttleMu.Lock()
 	defer b.throttleMu.Unlock()
@@ -121,10 +110,8 @@ func (b *Backend) SyncThrottle(sim float64, autothrottle bool) {
 	}
 }
 
-// writeThrottle writes the axis and, in the unsigned convention, the
-// reverse-hold button with it — the axis alone is only a magnitude there,
-// so a stale button would turn reverse into forward thrust or vice versa.
-// Caller holds throttleMu.
+// writeThrottle also sets the reverse-hold button in the unsigned
+// convention, where the axis is only a magnitude. Caller holds throttleMu.
 func (b *Backend) writeThrottle(value float64) error {
 	if err := b.holdReverse(!b.signed && value < 0); err != nil {
 		return err
@@ -133,10 +120,8 @@ func (b *Backend) writeThrottle(value float64) error {
 	return vjoylink.SetAxis(deviceID, a.usage, throttleToRaw(value, b.signed, b.idlePoint, b.invert, a.max))
 }
 
-// holdReverse presses the reverse button while the lever is in the reverse
-// zone, edge-triggered so it isn't rewritten on every axis update. Same
-// button the nudge control's REV hold uses, so one MSFS binding ("reverse
-// thrust, hold") covers both. Caller holds throttleMu.
+// holdReverse is edge-triggered. It is the same button the nudge control's
+// REV hold uses, so one MSFS binding covers both. Caller holds throttleMu.
 func (b *Backend) holdReverse(want bool) error {
 	if b.reverseHeld == want {
 		return nil
@@ -148,15 +133,11 @@ func (b *Backend) holdReverse(want bool) error {
 	return nil
 }
 
-// SetButton forwards press and release both: a vJoy button is held HID
-// state, so whether it acts as a toggle, momentary or repeat is decided by
-// the MSFS binding, not here.
 func (b *Backend) SetButton(id control.ButtonID, pressed bool) error {
 	return vjoylink.SetButton(deviceID, uint8(id), pressed)
 }
 
-// Ready reports whether the sim is connected: vJoy is always writable once
-// acquired, but nothing reaches MSFS without it running.
+// Ready reports sim connectivity; vJoy itself is always writable once acquired.
 func (b *Backend) Ready() bool { return b.sim.Ready() }
 
 func (b *Backend) Close() error {
@@ -165,14 +146,12 @@ func (b *Backend) Close() error {
 	return b.sim.Close()
 }
 
-// SetSignedThrottle, SetSignedThrottleIdle and SetThrottleInvert implement
-// control.SignedThrottleSetter.
 func (b *Backend) SetSignedThrottle(signed bool) {
 	b.throttleMu.Lock()
 	defer b.throttleMu.Unlock()
 	b.signed = signed
 	if signed {
-		b.holdReverse(false) // signed mode never touches the button again
+		b.holdReverse(false)
 	}
 }
 

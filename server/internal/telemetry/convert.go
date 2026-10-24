@@ -1,15 +1,8 @@
-// This file has no build tag, unlike source_windows.go's Windows-only
-// Source — the mapping below is pure arithmetic, unit-testable without
-// SimConnect or Windows, mirroring how internal/control/simconnect splits
-// its build-tag-free throttle.go from its Windows-only Backend.
 package telemetry
 
 import "mhotas/pkg/protocol"
 
-// rawState is Source's build-tag-free input to toTelemetry — a plain
-// mirror of simlink.AircraftState plus pause state (from
-// simlink.Client.Paused()), kept as its own type rather than importing
-// simlink's Windows-only package here.
+// rawState mirrors simlink.AircraftState plus pause state, so this file stays free of the Windows-only simlink import.
 type rawState struct {
 	FlapHandleIndex        int32
 	FlapNumHandlePositions int32
@@ -51,7 +44,7 @@ func toTelemetry(r rawState) protocol.Telemetry {
 
 // autothrottleActive guesses whether the autothrottle is driving the lever
 // right now: Airbus managed thrust, or the A/T armed with a speed/Mach mode
-// engaged. Armed alone isn't enough — a 737's A/T switch stays armed with
+// engaged. Armed alone isn't enough: a 737's A/T switch stays armed with
 // the pilot on manual thrust, which would block vJoy resync all flight.
 // ponytail: study-level aircraft may keep this in L:vars instead; add
 // per-aircraft reads if one shows up on a real aircraft.
@@ -60,8 +53,6 @@ func autothrottleActive(r rawState) bool {
 		(r.AutothrottleArmed != 0 && (r.AirspeedHold != 0 || r.MachHold != 0))
 }
 
-// gearPosition maps GEAR POSITION's 0..100 percent to the protocol's
-// coarse Up/Down/Transit enum.
 func gearPosition(pct int32) protocol.GearPosition {
 	switch {
 	case pct <= 0:
@@ -73,19 +64,8 @@ func gearPosition(pct int32) protocol.GearPosition {
 	}
 }
 
-// percentToUnit maps a SimConnect -100..100 percent reading to the wire
-// protocol's -1..1 range, clamped defensively in case a given aircraft's
-// model ever reports outside that span.
-func percentToUnit(pct float32) float32 {
-	return clampUnit(pct / 100)
-}
+func percentToUnit(pct float32) float32 { return clampUnit(pct / 100) }
 
 func clampUnit(v float32) float32 {
-	if v > 1 {
-		return 1
-	}
-	if v < -1 {
-		return -1
-	}
-	return v
+	return max(-1, min(1, v))
 }

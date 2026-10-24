@@ -6,13 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 const _prefsKey = 'mhotas.layout.offsets';
 
-/// Per-widget drag offset from its normal (flex-computed) position, keyed
-/// by a stable widget id (see control_screen.dart's `_Movable` usages).
-/// An empty map means every control renders exactly where it always has —
-/// this is the common case and must stay pixel-identical to the shipped,
-/// reviewed layout, so repositioning is a pure visual offset applied on
-/// top rather than a rewrite of the underlying Row/Column structure.
-/// Persisted the same way connect_screen.dart persists host/port.
+/// Per-control drag offset from its flex-computed position, keyed by widget id.
 class LayoutOffsetsNotifier extends StateNotifier<Map<String, Offset>> {
   LayoutOffsetsNotifier() : super(const {}) {
     _load();
@@ -56,6 +50,5 @@ final layoutOffsetsProvider =
   (ref) => LayoutOffsetsNotifier(),
 );
 
-/// Whether controls are currently draggable. Not persisted — always starts
-/// locked, so a fresh app launch never has stray drag handles showing.
+/// Not persisted, so a fresh launch always starts locked.
 final layoutEditModeProvider = StateProvider<bool>((ref) => false);

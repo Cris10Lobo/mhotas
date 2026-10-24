@@ -47,7 +47,6 @@ func TestLoadOverridesDefaults(t *testing.T) {
 	if got.Pitch.Failsafe != FailsafeHold {
 		t.Errorf("Pitch.Failsafe = %v, want hold", got.Pitch.Failsafe)
 	}
-	// Untouched fields should keep their Default() values.
 	if got.Roll != Default().Roll {
 		t.Errorf("Roll = %+v, want unchanged Default().Roll = %+v", got.Roll, Default().Roll)
 	}
@@ -65,8 +64,6 @@ func TestLoadInvalidJSON(t *testing.T) {
 
 func TestLoadRejectsInvalidFailsafeValue(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.json")
-	// A typo like this must not silently fall through to "hold" behavior —
-	// see validate's doc comment.
 	body := `{"pitch": {"failsafe": "netural"}}`
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatalf("WriteFile: %v", err)

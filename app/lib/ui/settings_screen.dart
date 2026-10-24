@@ -6,12 +6,6 @@ import '../state/calibration.dart';
 import '../state/connection.dart';
 import '../state/settings.dart';
 
-/// The manual joystick / nudge-throttle toggles are configurable purely
-/// on-device. Axis calibration (dead-zone/expo/invert/smoothing) lives on
-/// the server but is editable from here over CONFIG/CONFIG_SET — requesting
-/// a fresh read on open rather than trusting whatever the connect-time push
-/// happened to deliver, since this screen may not have been mounted yet when
-/// that one-shot CONFIG arrived.
 class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
 
@@ -59,9 +53,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ),
           const SizedBox(height: 8),
           const Text(
-            'Dead-zone, response curve, invert, and smoothing — applied on '
-            'the server, saved to its config file. Failsafe policy isn\'t '
-            'editable here; it stays a server-config-only setting.',
+            'Dead-zone, response curve, invert, and smoothing, applied on '
+            'the server and saved to its config file. Failsafe policy is '
+            'only editable in the server config.',
           ),
           const SizedBox(height: 16),
           if (calibration == null)
@@ -97,12 +91,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   }
 }
 
-/// One axis's dead-zone/expo/invert/smoothing, editable and sent to the
-/// server as a single CONFIG_SET on each slider release (not per-frame
-/// while dragging — these are rare edits, not a continuous control like the
-/// throttle lever, so there's no reason to flood the link or the config
-/// file's disk writes). [calibration] is the server's last-known value for
-/// this axis; local drag state only ever diverges from it mid-gesture.
+/// Sends one CONFIG_SET per slider release, not per drag frame, to spare the server's config file writes.
 class _AxisCalibrationCard extends ConsumerStatefulWidget {
   const _AxisCalibrationCard({
     required this.label,
@@ -111,7 +100,7 @@ class _AxisCalibrationCard extends ConsumerStatefulWidget {
   });
 
   final String label;
-  final int axis; // proto.ConfigAxis.*
+  final int axis;
   final proto.AxisCalibration calibration;
 
   @override
@@ -130,10 +119,6 @@ class _AxisCalibrationCardState extends ConsumerState<_AxisCalibrationCard> {
   @override
   void didUpdateWidget(_AxisCalibrationCard old) {
     super.didUpdateWidget(old);
-    // The server only ever sends CONFIG in reply to our own request or our
-    // own edit, so there's no "someone else is editing it live" race to
-    // guard against the way the throttle lever's telemetry sync needs to —
-    // always take the freshest known value.
     _deadZone = widget.calibration.deadZone;
     _expo = widget.calibration.expo;
     _smoothing = widget.calibration.smoothing;
@@ -244,10 +229,6 @@ class _CalibrationSlider extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // 0..1 sliders (dead-zone/expo/smoothing) read as a percentage; any
-    // other range (e.g. the signed-throttle idle point, -1..1) reads as a
-    // plain decimal — a "%" on a value that isn't a fraction of 1 would be
-    // misleading.
     final display = min == 0 && max == 1
         ? '${(value * 100).round()}%'
         : value.toStringAsFixed(2);

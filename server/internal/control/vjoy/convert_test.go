@@ -34,7 +34,7 @@ func TestThrottleToRaw(t *testing.T) {
 
 // Invert must mirror the final axis position (like MSFS's "reverse axis"),
 // not the input: with idle at -0.45, inverting the input put phone idle at
-// 73% of the axis under a reversed MSFS binding — read in the sim as ~75%.
+// 73% of the axis under a reversed MSFS binding, read in the sim as ~75%.
 func TestThrottleInvertMirrorsAxis(t *testing.T) {
 	const max = 32767
 	for _, v := range []float64{0, 0.5, 1, -0.5, -1} {
