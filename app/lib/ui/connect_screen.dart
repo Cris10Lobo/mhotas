@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../network/udp_client.dart';
 import '../state/connection.dart';
+import 'brand.dart';
 import 'control_screen.dart';
 import 'scan_screen.dart';
 
@@ -136,58 +137,146 @@ class _ConnectScreenState extends ConsumerState<ConnectScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('mHOTAS')),
-      // Scrollable: a fixed Column overflows on short screens or with the keyboard up.
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            const Text(
-              'Connect to mhotas-server',
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 24),
-            OutlinedButton.icon(
-              onPressed: _connecting ? null : _scanAndConnect,
-              icon: const Icon(Icons.qr_code_scanner),
-              label: const Text('Scan QR code'),
-            ),
-            const SizedBox(height: 16),
-            const Row(
-              children: [
-                Expanded(child: Divider()),
-                Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 12),
-                  child: Text('or enter manually'),
-                ),
-                Expanded(child: Divider()),
-              ],
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: _hostController,
-              decoration: const InputDecoration(labelText: 'Server IP address'),
-              keyboardType: TextInputType.number,
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _portController,
-              decoration: const InputDecoration(labelText: 'Port'),
-              keyboardType: TextInputType.number,
-            ),
-            const SizedBox(height: 24),
-            if (_error != null)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 12),
-                child: Text(_error!, style: const TextStyle(color: Colors.red)),
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+
+    final scan = Material(
+      color: scheme.secondaryContainer,
+      borderRadius: BorderRadius.circular(20),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(20),
+        onTap: _connecting ? null : _scanAndConnect,
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.qr_code_scanner,
+                  size: 48, color: scheme.onSecondaryContainer),
+              const SizedBox(height: 12),
+              Text('Scan QR code',
+                  style: theme.textTheme.titleMedium?.copyWith(
+                      color: scheme.onSecondaryContainer,
+                      fontWeight: FontWeight.w600)),
+              const SizedBox(height: 4),
+              Text(
+                'Point the camera at the code in the server window',
+                textAlign: TextAlign.center,
+                style: theme.textTheme.bodySmall
+                    ?.copyWith(color: scheme.onSecondaryContainer),
               ),
-            FilledButton(
-              onPressed: _connecting ? null : _connect,
-              child: Text(_connecting ? 'Connecting...' : 'Connect'),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    final manual = Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text('Enter address',
+            style: theme.textTheme.titleMedium
+                ?.copyWith(fontWeight: FontWeight.w600)),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(
+              flex: 3,
+              child: TextField(
+                controller: _hostController,
+                keyboardType: TextInputType.number,
+                textInputAction: TextInputAction.next,
+                decoration: const InputDecoration(
+                  labelText: 'Server IP',
+                  hintText: '192.168.1.20',
+                  prefixIcon: Icon(Icons.computer),
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: TextField(
+                controller: _portController,
+                keyboardType: TextInputType.number,
+                textInputAction: TextInputAction.go,
+                onSubmitted: (_) => _connecting ? null : _connect(),
+                decoration: const InputDecoration(
+                  labelText: 'Port',
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                ),
+              ),
             ),
           ],
+        ),
+        if (_error != null) ...[
+          const SizedBox(height: 10),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(Icons.error_outline, size: 18, color: scheme.error),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(_error!,
+                    style: theme.textTheme.bodySmall
+                        ?.copyWith(color: scheme.error)),
+              ),
+            ],
+          ),
+        ],
+        const SizedBox(height: 12),
+        FilledButton.icon(
+          onPressed: _connecting ? null : _connect,
+          style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(48)),
+          icon: _connecting
+              ? const SizedBox.square(
+                  dimension: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2))
+              : const Icon(Icons.link),
+          label: Text(_connecting ? 'Connecting...' : 'Connect'),
+        ),
+      ],
+    );
+
+    return Scaffold(
+      appBar: AppBar(title: const BrandTitle()),
+      body: SafeArea(
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final wide = constraints.maxWidth >= 600;
+            final content = wide
+                ? IntrinsicHeight(
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Expanded(child: scan),
+                        const SizedBox(width: 24),
+                        Expanded(child: Center(child: manual)),
+                      ],
+                    ),
+                  )
+                : Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [scan, const SizedBox(height: 24), manual],
+                  );
+            // Scrollable so the keyboard can't cause an overflow; otherwise it fits on one screen.
+            return SingleChildScrollView(
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+              child: ConstrainedBox(
+                constraints:
+                    BoxConstraints(minHeight: constraints.maxHeight - 32),
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 760),
+                    child: content,
+                  ),
+                ),
+              ),
+            );
+          },
         ),
       ),
     );

@@ -16,6 +16,7 @@ import '../state/layout.dart';
 import '../state/settings.dart';
 import '../state/slider_axis.dart';
 import '../state/telemetry.dart';
+import 'brand.dart';
 import 'settings_screen.dart';
 
 /// Must match the button IDs in the server config.
@@ -639,9 +640,26 @@ class _ConnectionStatusText extends StatelessWidget {
       ConnectionStatus.connecting => ('Connecting', Colors.orange),
       _ => ('Disconnected', Colors.red),
     };
-    return Text(
-      'mHOTAS - $label',
-      style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 12),
+    return BrandTitle(
+      trailing: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.15),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.circle, size: 8, color: color),
+            const SizedBox(width: 5),
+            Text(
+              label,
+              style: TextStyle(
+                  color: color, fontWeight: FontWeight.w600, fontSize: 12),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
