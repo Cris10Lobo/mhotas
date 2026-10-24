@@ -1,4 +1,9 @@
-<p align="center"><img src="docs/logo.svg" alt="mHOTAS logo" width="160"></p>
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/logo.svg">
+    <img src="docs/logo-light.svg" alt="mHOTAS logo" width="160">
+  </picture>
+</p>
 
 # mHOTAS
 
