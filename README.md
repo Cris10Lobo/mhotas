@@ -40,6 +40,38 @@ Drag any control to where your thumbs want it. The layout is saved.
 ### Safe when Wi-Fi drops
 Pitch, roll and rudder return to neutral within half a second, and the throttle stays put.
 
+### Two ways to send input
+Use vJoy, a virtual joystick you bind in MSFS's controls menu like any other device, or send everything straight through SimConnect with nothing extra to install.
+
+## The flying screen
+
+<p align="center">
+  <img src="docs/screen.png" alt="The mHOTAS flying screen" width="720">
+</p>
+
+| Control | What it does |
+|---------|--------------|
+| Tilt the phone | Pitch and roll. The attitude display in the middle shows what the sim gets. |
+| Pause button on the attitude display | Holds pitch and roll at neutral so you can put the phone down. Everything else keeps working. |
+| Calibrate | Sets how you're holding the phone right now as neutral. |
+| Throttle (THR) | Drag up for power. Below the idle line is reverse thrust, if signed reverse thrust is on. Shows A/T while autothrottle is flying. |
+| Rudder | Drag left or right. Springs back to center when you let go. |
+| Trim ▲ ▼ | Elevator trim. Hold to keep trimming. The percentage is the sim's trim position. |
+| AP (AP DISC) | Disconnects the autopilot. Lit while the autopilot is on. |
+| Speedbrake (SPD) | Drag between the detents to deploy. ARM toggles auto spoilers. |
+| Flaps (FLAP) | Drag to the notch you want. Follows the sim if you move flaps there. |
+| Gear | Tap to raise or lower. Shows UP, DOWN or in transit. |
+| Park brake (P) | Tap to toggle the parking brake. |
+| Toe brake (BRK) | Hold to brake. |
+| Pause (top bar) | Pauses the sim. |
+| Move icon (top bar) | Edit mode: drag controls around, then tap again to lock the layout. |
+| Settings | On-screen stick instead of tilt, +/- throttle buttons instead of the lever, throttle options and per-axis calibration. |
+
+## Planned
+
+- Microsoft Flight Simulator 2020 support
+- X-Plane support
+
 ## What you need
 
 - A Windows PC running MSFS 2024.
