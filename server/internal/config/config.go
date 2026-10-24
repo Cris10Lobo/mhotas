@@ -1,8 +1,4 @@
-// Package config loads server configuration: listen port, per-axis
-// calibration curves, and failsafe policy. Backed by a hand-edited JSON
-// file; per-axis dead-zone/expo/invert/smoothing can also be edited live
-// from the phone (CONFIG_SET, see server/internal/transport), which calls
-// Save to persist the change back to the same file.
+// Package config loads and saves the server's JSON configuration.
 package config
 
 import (
@@ -13,8 +9,7 @@ import (
 	"mhotas/internal/calibration"
 )
 
-// FailsafeAction describes what a given axis should do when the server
-// stops receiving AXIS packets past the failsafe timeout.
+// FailsafeAction is what an axis does when AXIS packets time out.
 type FailsafeAction string
 
 const (
@@ -22,43 +17,25 @@ const (
 	FailsafeHold    FailsafeAction = "hold"
 )
 
-// AxisConfig groups a calibration curve with the failsafe policy for one axis.
 type AxisConfig struct {
 	Curve    calibration.Curve `json:"curve"`
 	Failsafe FailsafeAction    `json:"failsafe"`
 
-	// Smoothing blends each new shaped value with the previous one (0 =
-	// off/instant, closer to 1 = slower/heavier smoothing) so a fast, jerky
-	// phone tilt doesn't reach the sim as a raw spike. Applied in
-	// transport.Server, after Curve — it's temporal (needs the previous
-	// sample) rather than a pure per-value shaping function like Curve.
+	// Smoothing is the weight of the previous value (0 = off, toward 1 =
+	// heavier). Applied by transport after Curve since it needs history.
 	Smoothing float64 `json:"smoothing"`
 
-	// SignedThrottle and SignedThrottleIdle only mean anything on the
-	// throttle axis (see control/simconnect/drivers.go's throttleEx1Driver):
-	// SimConnect's THROTTLE_AXIS_SET_EX1 has two known reverse-thrust
-	// conventions — arm/disarm via a toggle plus an always-positive
-	// magnitude (this project's default), or one continuous signed value
-	// sent straight through with no arm step. SignedThrottle picks the
-	// latter. SignedThrottleIdle is that signed value's own idle point
-	// (0 = no remap, raw signed value passes straight through) — no aircraft
-	// convention is assumed here; where "idle" actually falls on that -1..1
-	// scale is specific to whichever aircraft is loaded; this project has no
-	// way to know it, so it's a plain tunable number, not a guess baked into
-	// the code. Both phone-editable, same as the rest of AxisConfig's
-	// Curve/Smoothing fields, via CONFIG_SET.
+	// Throttle only. SignedThrottle sends one continuous signed value instead
+	// of SimConnect's arm-toggle plus positive magnitude. SignedThrottleIdle
+	// is where idle falls on that -1..1 scale; it depends on the aircraft, so
+	// it is a tuned number (0 = no remap).
 	SignedThrottle     bool    `json:"signed_throttle,omitempty"`
 	SignedThrottleIdle float64 `json:"signed_throttle_idle,omitempty"`
 }
 
-// ControlMapping declares how one named control (a key in Config.Controls,
-// e.g. "throttle", "gear" — resolved against control.AxisByName/ButtonByName)
-// actually reaches the simulator. Driver is backend-specific data, not
-// validated here: control/simconnect's driver factory is the authority on
-// which Driver kinds ("kevent", "input_event", ...) and fields it
-// understands — this struct only carries the JSON through. A backend that
-// doesn't recognize a Driver kind, or finds an entry naming a control it
-// doesn't drive, fails at backend construction, not here.
+// ControlMapping is one Config.Controls entry. It is not validated here;
+// control/simconnect's driver factory owns the meaning of Driver and fails
+// at backend construction on an unknown one.
 type ControlMapping struct {
 	Driver string `json:"driver"`
 	Event  string `json:"event,omitempty"` // kevent: the K:EVENT name to transmit
@@ -75,18 +52,13 @@ type Config struct {
 	Throttle          AxisConfig `json:"throttle"`
 	Rudder            AxisConfig `json:"rudder"`
 
-	// Controls overrides how individual controls reach the simulator, keyed
-	// by name ("throttle", "gear", "autopilot_disconnect", ...). A name with
-	// no entry here uses the active backend's own default mapping — an
-	// empty/absent Controls section reproduces that backend's built-in
-	// behavior exactly.
+	// Controls overrides per-control mappings by name; absent names use the
+	// backend's defaults.
 	Controls map[string]ControlMapping `json:"controls,omitempty"`
 }
 
-// Default returns the MVP default configuration: port 9750, 500ms failsafe
-// timeout, no dead-zone/expo shaping. Pitch/roll/rudder snap to neutral and
-// throttle holds its last value on failsafe — an unexpected throttle cut
-// is a worse mid-flight surprise than a stale hold.
+// Default holds throttle on failsafe: a sudden throttle cut is a worse
+// surprise than a stale hold.
 func Default() Config {
 	return Config{
 		ListenPort:        9750,
@@ -98,10 +70,8 @@ func Default() Config {
 	}
 }
 
-// Load reads a JSON config file at path, starting from Default() and
-// overriding whatever fields the file specifies. If path is empty or the
-// file doesn't exist, Default() is returned unchanged — a config file is
-// optional for MVP.
+// Load overlays the JSON file at path onto Default(). An empty or missing
+// path yields Default().
 func Load(path string) (Config, error) {
 	cfg := Default()
 	if path == "" {
@@ -123,11 +93,7 @@ func Load(path string) (Config, error) {
 	return cfg, nil
 }
 
-// Save writes cfg as JSON to path. Empty path is a no-op, mirroring Load's
-// "no config file" case — used so a live phone-side calibration edit
-// (server/internal/transport's CONFIG_SET handling) persists across a
-// restart when the server was launched with -config, and is silently
-// skipped rather than erroring when it wasn't.
+// Save writes cfg to path; an empty path is a no-op.
 func Save(path string, cfg Config) error {
 	if path == "" {
 		return nil
@@ -142,11 +108,8 @@ func Save(path string, cfg Config) error {
 	return nil
 }
 
-// validate rejects a failsafe value that isn't exactly "neutral" or
-// "hold". Without this, applyFailsafe (transport/server.go) treats any
-// other value — a typo like "netural" — as "hold" silently, which for
-// pitch/roll/rudder means an unattended AXIS timeout leaves stale input
-// applied indefinitely instead of the safety-critical snap to neutral.
+// validate rejects unknown failsafe values: transport would treat a typo
+// like "netural" as hold, leaving stale pitch/roll/rudder applied on timeout.
 func (c Config) validate() error {
 	axes := map[string]AxisConfig{"pitch": c.Pitch, "roll": c.Roll, "throttle": c.Throttle, "rudder": c.Rudder}
 	for name, ac := range axes {

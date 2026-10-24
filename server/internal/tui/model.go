@@ -31,40 +31,30 @@ func tick() tea.Cmd {
 	return tea.Tick(500*time.Millisecond, func(t time.Time) tea.Msg { return tickMsg(t) })
 }
 
-// Model is the dashboard's bubbletea state. It never drives the server or
-// backend — Status()/Ready()/Lines() are all read-only snapshots polled on
-// a tick, matching how the app's own control_screen.dart treats telemetry
-// as something to display, not something driving local logic.
+// Model is the dashboard's bubbletea state; it only polls snapshots.
 type Model struct {
 	srv     *transport.Server
 	backend control.Output
 	tail    *LogTail
 
-	banner string // rendered once at startup, static for the process lifetime
-	input  string // input path readout, also fixed at startup
+	banner string
+	input  string
 
 	connectAddr string
-	altAddrs    []string // fallback candidates if connectAddr turns out unreachable
+	altAddrs    []string
 	qr          string
 	qrErr       error
 
-	// logs is a bounded, scrollable viewport rather than "however many
-	// lines fit" computed from a guessed chrome height — a fixed-size
-	// component structurally can't push the header/panes above it out of
-	// view the way a misjudged line-count budget did (the header/panes
-	// were shorter than their real rendered height once the QR code's own
-	// size was accounted for, so more log lines were shown than actually
-	// fit, and the terminal scrolled everything up as a result).
+	// A fixed-size viewport keeps the log pane from pushing the header and
+	// panes off-screen, as a guessed line budget once did.
 	logs      viewport.Model
-	logsReady bool // false until the first WindowSizeMsg gives real dimensions
+	logsReady bool
 }
 
 func New(srv *transport.Server, backend control.Output, tail *LogTail) Model {
 	m := Model{srv: srv, backend: backend, tail: tail, input: inputLabel(backend)}
 
-	// Non-fatal if this fails (a font-data bug, say) — the dashboard's job
-	// is showing sim/device status, not the banner; fall back to plain
-	// text rather than let a cosmetic failure take down the display.
+	// A banner failure is cosmetic; headerBlock falls back to plain text.
 	if banner, err := renderBanner(); err == nil {
 		m.banner = banner
 	}
@@ -89,26 +79,10 @@ func (m Model) Init() tea.Cmd {
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		// Measured, not guessed: an earlier version used a hardcoded
-		// constant here that didn't account for the QR code's own height
-		// (it scales with the connect string's length), which was the
-		// actual root cause of logs pushing the header/panes off-screen —
-		// the log budget was computed against a chrome height smaller than
-		// chrome actually was. lipgloss.Height measures what really
-		// rendered, so this can't drift out of sync with topBlock/
-		// headerBlock again.
-		//
-		// The banner+QR+status block alone is ~30 rows — below that
-		// terminal height there's no room for any log pane regardless
-		// (see the zero-floor comment below), and eventually not even for
-		// the full header on a truly tiny terminal. That's an inherent
-		// size floor of the dashboard, not a bug to route around here.
+		// Measure the real chrome height: it depends on the QR code size.
 		chromeHeight := lipgloss.Height(m.headerBlock()) + 1 /* blank */ +
 			lipgloss.Height(m.topBlock()) + 1 /* blank */ + 1 /* "Recent activity" label */
-		// No floor here on purpose: a forced minimum (log pane always at
-		// least N lines) is exactly the bug this replaced — on a terminal
-		// too short to fit the header/panes plus any logs, an empty log
-		// pane is the correct outcome, not a guaranteed overflow.
+		// No minimum: on a short terminal an empty log pane beats overflow.
 		logHeight := max(msg.Height-chromeHeight, 0)
 		if !m.logsReady {
 			m.logs = viewport.New(msg.Width, logHeight)
@@ -125,7 +99,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 		var cmd tea.Cmd
-		m.logs, cmd = m.logs.Update(msg) // arrow/j-k/pgup-pgdn/u-d — see viewport.DefaultKeyMap
+		m.logs, cmd = m.logs.Update(msg)
 		return m, cmd
 	case tickMsg:
 		m.refreshLogs()
@@ -134,10 +108,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// refreshLogs pushes the latest tail into the viewport, auto-following new
-// lines the way `tail -f` does — but only if the user was already at the
-// bottom, so scrolling up to read older lines doesn't get yanked back down
-// by the next tick.
+// refreshLogs follows new lines only if the user is already at the bottom.
 func (m *Model) refreshLogs() {
 	if !m.logsReady {
 		return
@@ -152,7 +123,7 @@ func (m *Model) refreshLogs() {
 func (m Model) headerBlock() string {
 	header := bannerStyle.Render(m.banner)
 	if m.banner == "" {
-		header = titleStyle.Render("mHOTAS Server") // renderBanner failed — plain-text fallback
+		header = titleStyle.Render("mHOTAS Server")
 	}
 	subheader := subtitleStyle.Render("Mobile Hands On Throttle And Stick") +
 		"   " + dimStyle.Render("(q to quit, ↑/↓ to scroll log)")
@@ -177,22 +148,14 @@ func (m Model) topBlock() string {
 		"Phone:    " + phoneLabel(status)
 
 	qrPane := paneStyle.Render(connectPane)
-	// Match the QR box's footprint rather than letting the status box
-	// auto-size to its own (shorter, narrower) content — border+padding
-	// account for 4 of the QR pane's total width (1 char of border plus 1
-	// of padding on each side) but only 2 of its height (Padding(0, 1) has
-	// no vertical component), same as paneStyle applies to both panes here.
+	// Size the status box to the QR box: border plus padding is 4 wide, 2 tall.
 	innerWidth := lipgloss.Width(qrPane) - 4
 	innerHeight := lipgloss.Height(qrPane) - 2
 
 	diagram := lipgloss.NewStyle().Width(innerWidth).Align(lipgloss.Center).
 		Render(statusDiagram(ready, status.DeviceConnected))
 
-	// Diagram vertically centered in the space above the text (it's the
-	// icon), Backend/Sim/Phone pinned to the bottom and left-aligned (it's
-	// a readout) — the split top/bottom filler is what stretches the box
-	// to the QR box's full height instead of shrink-wrapping its own
-	// content, while keeping the diagram centered rather than top-pinned.
+	// Diagram centered above the text readout, which is pinned to the bottom.
 	remaining := max(innerHeight-lipgloss.Height(textBlock), 0)
 	topFiller := max((remaining-lipgloss.Height(diagram))/2, 0)
 	bottomFiller := max(remaining-lipgloss.Height(diagram)-topFiller, 0)
@@ -207,21 +170,14 @@ func (m Model) topBlock() string {
 
 func (m Model) View() string {
 	if !m.logsReady {
-		// First frame, before any WindowSizeMsg has arrived — bubbletea
-		// sends one immediately on start, so this is on screen for a
-		// single frame at most.
 		return m.headerBlock() + "\n\n" + m.topBlock() + "\n"
 	}
 	return m.headerBlock() + "\n\n" + m.topBlock() +
 		"\n\n" + dimStyle.Render("Recent activity") + "\n" + m.logs.View()
 }
 
-// statusDiagram renders the sim and phone links as two Airbus-overhead-
-// panel-style sources whose lines converge into one bus-tie indicator —
-// "online" means both sources are actually live, not just that a line
-// reached the connector. Example/prototype for the equivalent widget
-// planned for control_screen.dart; ASCII here needed no wire-protocol
-// change since both booleans are already local to the server process.
+// statusDiagram shows the sim and phone links converging on a bus that is
+// online only when both are live.
 func statusDiagram(simReady, phoneOnline bool) string {
 	bothOnline := simReady && phoneOnline
 	busLabel := waitStyle.Render("OFFLINE")
@@ -238,12 +194,7 @@ func statusDiagram(simReady, phoneOnline bool) string {
 		"          │",
 		"        " + dot(bothOnline) + " " + busLabel,
 	}
-	// Rows are hand-aligned to each other by their raw column offsets (the
-	// lines/dots only line up because every row starts at column 0), which
-	// a later per-line lipgloss.Align(Center) on the whole pane would wreck
-	// — it centers each line to its own width, and these rows aren't the
-	// same width. Right-padding every row to the widest one first means
-	// that centering step shifts them all by the same amount instead.
+	// Pad rows to equal width so the pane's per-line centering shifts them together.
 	width := 0
 	for _, r := range rows {
 		if w := lipgloss.Width(r); w > width {

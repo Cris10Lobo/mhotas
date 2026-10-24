@@ -1,10 +1,6 @@
 //go:build windows
 
-// Package simlink isolates github.com/mrlm-net/simconnect's actual API
-// from the rest of the server (server/internal/control/simconnect and
-// server/internal/telemetry), so a binding swap doesn't ripple through the
-// rest of the codebase. Connection pattern and event names below were
-// validated against a live MSFS2024 session.
+// Package simlink isolates the third-party SimConnect binding so a swap does not ripple into the rest of the server.
 package simlink
 
 import (
@@ -22,51 +18,32 @@ import (
 	"github.com/mrlm-net/simconnect/pkg/types"
 )
 
-// Client event IDs: arbitrary but must be unique within a connection.
 const (
-	eventAxisElevator   uint32 = 1
-	eventAxisAileron    uint32 = 2
-	eventAxisRudder     uint32 = 3
-	eventGearToggle     uint32 = 4
-	eventParkingBrake   uint32 = 5
 	eventPauseSet       uint32 = 6
 	eventThrottleEx1    uint32 = 7
 	eventReverseToggle  uint32 = 8
-	eventFlapsIncr      uint32 = 9
-	eventFlapsDecr      uint32 = 10
 	eventAxisLeftBrake  uint32 = 11
 	eventAxisRightBrake uint32 = 12
-	eventSpoilersInc    uint32 = 13
-	eventSpoilersDec    uint32 = 14
 	eventSpoilersArmSet uint32 = 15
-	eventAutopilotOff   uint32 = 16
 
 	notificationGroup uint32 = 1
 
 	// AxisRange is the SimConnect AXIS_*_SET input range: full deflection
-	// is ±AxisRange (0..AxisRange for throttle).
+	// is +-AxisRange (0..AxisRange for throttle).
 	AxisRange = 16383
 
-	// Telemetry read: flap handle, gear position, throttle lever position,
-	// parking brake state.
 	defAircraftState uint32 = 100
 	reqAircraftState uint32 = 200
 
-	// reqInputEvents is EnumerateInputEvents' request ID — must be in
-	// SimConnect's "user range" (1–999,999,849), clear of the fixed pair
-	// above.
+	// Must be in SimConnect's user range (1-999,999,849).
 	reqInputEvents uint32 = 400
 
-	// genericEventBase is the first client event ID handed out by
-	// RegisterEvent, for config-declared K:EVENT names beyond the fixed set
-	// above — clear of both that set and the telemetry request IDs.
+	// First client event ID handed out by RegisterEvent, clear of the fixed events above.
 	genericEventBase uint32 = 1000
 )
 
-// Client wraps a live, auto-reconnecting SimConnect connection. SetXxx
-// calls made before MSFS2024 is actually reachable return an error rather
-// than blocking — callers (control/simconnect) already treat backend
-// errors as non-fatal, matching how a phone losing WiFi is handled.
+// Client wraps an auto-reconnecting SimConnect connection. Writes made
+// before MSFS2024 is reachable return an error instead of blocking.
 type Client struct {
 	mgr    manager.Manager
 	log    *slog.Logger
@@ -74,107 +51,47 @@ type Client struct {
 	paused atomic.Bool
 	state  atomic.Value // holds AircraftState
 
-	// genericEvents backs RegisterEvent/TransmitNamed: config-declared
-	// K:EVENT names, assigned a stable client event ID up front (safe to
-	// call before the first connection) and (re-)mapped to that ID inside
-	// setupEvents on every StateConnected, same as the fixed events above.
 	genericEventsMu sync.Mutex
 	genericEvents   map[string]uint32
 	nextGenericID   uint32
 
-	// inputEvents caches the current session's Input Event name->hash
-	// enumeration (see watchInputEvents) — cleared and rebuilt on every
-	// StateConnected, since hashes are session-scoped and must never be
-	// reused across a reconnect or aircraft change (confirmed in the
-	// mrlm-net/simconnect manager docs).
+	// Input Event hashes are session-scoped: rebuilt on every connect, never reused across reconnects or aircraft changes.
 	inputEventsMu sync.Mutex
 	inputEvents   map[string]uint64
 
-	// reverseArmedMu/reverseArmed back SetReverseArmed — single source of
-	// truth for THROTTLE_REVERSE_THRUST_TOGGLE's arm state, shared by every
-	// caller (throttleEx1Driver's axis-sign-transition arm and the discrete
-	// reverse-arm button both go through this). Two independent callers
-	// each guessing their own local arm state and calling the bare toggle
-	// directly is exactly how they'd desync and flip each other's work —
-	// see docs/milestones.md item 6's follow-up.
+	// Single source of truth for THROTTLE_REVERSE_THRUST_TOGGLE's arm state.
+	// The event only flips, so callers guessing their own state would desync each other.
 	reverseArmedMu sync.Mutex
 	reverseArmed   bool
 }
 
-// aircraftStateData mirrors SimConnect's fixed struct layout for the
-// telemetry read; field order must match setupTelemetryRead's
-// AddToDataDefinition call order.
-type aircraftStateData struct {
-	FlapHandleIndex        int32
-	FlapNumHandlePositions int32
-	GearPositionPercent    int32
-	ThrottleLeverPercent   float32
-	ParkingBrakeSet        int32
-	StallWarning           int32
-	OnGround               int32
-	GroundVelocityKnots    float32
-	SpoilersHandlePercent  float32
-	SpoilersArmed          int32
-	ElevatorTrim           float32
-	AutopilotMaster        int32
-	AutothrottleArmed      int32
-	ManagedThrottleActive  int32
-	AirspeedHold           int32
-	MachHold               int32
-}
-
+// AircraftState mirrors SimConnect's struct layout for the telemetry read;
+// field order must match setupTelemetryRead's AddToDataDefinition order.
 type AircraftState struct {
 	FlapHandleIndex        int32
 	FlapNumHandlePositions int32
-	// GearPositionPercent is 0 (fully up)..100 (fully down); values in
-	// between mean the gear is in transit. Uses GEAR POSITION (percent),
-	// not GEAR HANDLE POSITION (the commanded handle state, which can't
-	// distinguish "down and locked" from "still retracting/extending") —
-	// resolves a gap in an earlier approach that used GEAR HANDLE POSITION.
-	// Not yet confirmed against a live sim.
+	// GearPositionPercent is 0 (up)..100 (down); in between is in transit.
+	// GEAR HANDLE POSITION can't tell "down and locked" from "still extending".
 	GearPositionPercent int32
-	// ThrottleLeverPercent is GENERAL ENG THROTTLE LEVER POSITION:1,
-	// -100..100 (negative = reverse) — the throttle lever's actual current
-	// position in the sim, independent of what control/simconnect last
-	// commanded. Feeds telemetry.Source so the phone can mirror manual
-	// in-sim throttle changes instead of fighting them. Not yet confirmed
-	// against a live sim.
-	ThrottleLeverPercent float32
-	// ParkingBrakeSet is BRAKE PARKING POSITION, 0 or 1 — same
-	// don't-guess-locally rationale as ThrottleLeverPercent, applied to a
-	// toggle button instead of a continuous axis: the app can show whether
-	// the brake is actually set rather than assuming it never changes
-	// outside a button tap. Not yet confirmed against a live sim.
-	ParkingBrakeSet int32
-	// StallWarning is STALL WARNING, 0 or 1 — drives the phone's stick-
-	// shaker haptic. Not yet confirmed against a live sim.
-	StallWarning int32
-	// OnGround is SIM ON GROUND, 0 or 1 — gates the taxi/ground-roll rumble
-	// haptic so it never fires airborne. Not yet confirmed against a live sim.
-	OnGround int32
-	// GroundVelocityKnots is GROUND VELOCITY, knots — drives the taxi/
-	// ground-roll rumble's pulse rate. Not yet confirmed against a live sim.
-	GroundVelocityKnots float32
-	// SpoilersHandlePercent is SPOILERS HANDLE POSITION, 0..100.
+	// ThrottleLeverPercent is the lever's actual position, -100..100 (negative = reverse).
+	ThrottleLeverPercent  float32
+	ParkingBrakeSet       int32
+	StallWarning          int32
+	OnGround              int32
+	GroundVelocityKnots   float32
 	SpoilersHandlePercent float32
-	// SpoilersArmed is SPOILERS ARMED, 0 or 1.
-	SpoilersArmed int32
-	// ElevatorTrim is ELEVATOR TRIM PCT, -1..1.
-	ElevatorTrim float32
-	// AutopilotMaster is AUTOPILOT MASTER, 0 or 1.
-	AutopilotMaster int32
-	// AutothrottleArmed (AUTOPILOT THROTTLE ARM), ManagedThrottleActive
-	// (AUTOPILOT MANAGED THROTTLE ACTIVE, Airbus A/THR), AirspeedHold and
-	// MachHold feed telemetry's autothrottle-driving guess; armed alone
-	// isn't it — a 737's A/T switch stays armed all flight.
+	SpoilersArmed         int32
+	ElevatorTrim          float32 // -1..1
+	AutopilotMaster       int32
+	// Armed alone doesn't mean the autothrottle is driving: a 737's A/T
+	// switch stays armed all flight.
 	AutothrottleArmed     int32
-	ManagedThrottleActive int32
+	ManagedThrottleActive int32 // Airbus A/THR
 	AirspeedHold          int32
 	MachHold              int32
 }
 
-// LatestState returns the most recent aircraft-state reading, or false if
-// none has arrived yet (not connected, or MSFS2024 hasn't sent one).
+// LatestState returns the most recent reading, or false if none has arrived yet.
 func (c *Client) LatestState() (AircraftState, bool) {
 	v := c.state.Load()
 	if v == nil {
@@ -183,32 +100,24 @@ func (c *Client) LatestState() (AircraftState, bool) {
 	return v.(AircraftState), true
 }
 
-// Paused reports the sim's actual current pause state, from SimConnect's
-// own "Pause" system event (github.com/mrlm-net/simconnect's
-// manager.Manager.OnPause) — not a locally-guessed toggle. Defaults false
-// before the first event arrives, matching the app's prior assumption.
+// Paused reports the sim's pause state from SimConnect's "Pause" system event.
 func (c *Client) Paused() bool {
 	return c.paused.Load()
 }
 
-// Ready reports whether the SimConnect handshake has completed and events/
-// telemetry are actually flowing — false while waiting for MSFS2024 to
-// launch or reconnecting after it closes.
+// Ready reports whether the SimConnect handshake has completed.
 func (c *Client) Ready() bool {
 	return c.ready.Load()
 }
 
-// Connect starts the SimConnect manager in the background and returns
-// immediately; it does not wait for MSFS2024 to be reachable — auto-
-// reconnect (sim not running yet / paused / restarted) is handled
-// internally, confirmed against a live sim.
+// Connect starts the SimConnect manager in the background and returns immediately, before MSFS2024 is reachable.
 func Connect(ctx context.Context, log *slog.Logger) *Client {
 	c := &Client{log: log, genericEvents: map[string]uint32{}, nextGenericID: genericEventBase}
 
 	c.mgr = manager.New("mHOTAS Server",
 		manager.WithContext(ctx),
 		manager.WithAutoReconnect(true),
-		manager.WithAutoDetect(), // SimConnect.dll isn't always at the library's hardcoded default path
+		manager.WithAutoDetect(), // SimConnect.dll isn't always at the library's default path
 	)
 
 	_ = c.mgr.OnConnectionStateChange(func(oldState, newState manager.ConnectionState) {
@@ -223,16 +132,12 @@ func Connect(ctx context.Context, log *slog.Logger) *Client {
 				c.inputEvents = map[string]uint64{}
 				c.inputEventsMu.Unlock()
 				if err := c.mgr.EnumerateInputEvents(reqInputEvents); err != nil {
-					// Expected on MSFS2020 (Input Events are MSFS2024-only)
-					// and harmless either way — nothing depends on this
-					// succeeding yet (diagnostic + input_event driver
-					// groundwork only).
+					// Expected on MSFS2020; Input Events are MSFS2024-only.
 					c.log.Info("input event enumeration unavailable", "err", err)
 				}
 				c.ready.Store(true)
 			}
 		case manager.StateAvailable:
-			// Event mapping already happened on StateConnected; nothing more needed.
 		default:
 			c.ready.Store(false)
 		}
@@ -246,9 +151,6 @@ func Connect(ctx context.Context, log *slog.Logger) *Client {
 	})
 	go c.watchInputEvents(inputEventsSub.Messages())
 
-	// SimConnect's own Pause system event, auto-subscribed by the manager
-	// on connect — ground truth for Client.Paused(), not a locally-tracked
-	// guess of whether our last SetPause call should have flipped it.
 	_ = c.mgr.OnPause(func(paused bool) { c.paused.Store(paused) })
 
 	go func() {
@@ -260,49 +162,24 @@ func Connect(ctx context.Context, log *slog.Logger) *Client {
 	return c
 }
 
-// setupEvents maps our client event IDs to MSFS's real events and
-// registers them in a notification group, as required before
-// TransmitClientEvent will do anything. Event names verified against the
-// official MSFS SDK docs and confirmed against a live sim.
 func setupEvents(client engine.Client) {
-	client.MapClientEventToSimEvent(eventAxisElevator, "AXIS_ELEVATOR_SET")
-	client.MapClientEventToSimEvent(eventAxisAileron, "AXIS_AILERONS_SET")
-	client.MapClientEventToSimEvent(eventAxisRudder, "AXIS_RUDDER_SET")
-	client.MapClientEventToSimEvent(eventGearToggle, "GEAR_TOGGLE")
-	client.MapClientEventToSimEvent(eventParkingBrake, "PARKING_BRAKES")
-	client.MapClientEventToSimEvent(eventPauseSet, "PAUSE_SET")
-	client.MapClientEventToSimEvent(eventThrottleEx1, "THROTTLE_AXIS_SET_EX1")
-	client.MapClientEventToSimEvent(eventReverseToggle, "THROTTLE_REVERSE_THRUST_TOGGLE")
-	client.MapClientEventToSimEvent(eventFlapsIncr, "FLAPS_INCR")
-	client.MapClientEventToSimEvent(eventFlapsDecr, "FLAPS_DECR")
-	client.MapClientEventToSimEvent(eventAxisLeftBrake, "AXIS_LEFT_BRAKE_SET")
-	client.MapClientEventToSimEvent(eventAxisRightBrake, "AXIS_RIGHT_BRAKE_SET")
-	client.MapClientEventToSimEvent(eventSpoilersInc, "SPOILERS_INC")
-	client.MapClientEventToSimEvent(eventSpoilersDec, "SPOILERS_DEC")
-	client.MapClientEventToSimEvent(eventSpoilersArmSet, "SPOILERS_ARM_SET")
-	client.MapClientEventToSimEvent(eventAutopilotOff, "AUTOPILOT_OFF")
-
-	for _, id := range []uint32{
-		eventAxisElevator, eventAxisAileron, eventAxisRudder,
-		eventGearToggle, eventParkingBrake, eventPauseSet,
-		eventThrottleEx1, eventReverseToggle,
-		eventFlapsIncr, eventFlapsDecr,
-		eventAxisLeftBrake, eventAxisRightBrake,
-		eventSpoilersInc, eventSpoilersDec, eventSpoilersArmSet,
-		eventAutopilotOff, // was missing from this loop before the AP-disconnect button existed
+	for id, name := range map[uint32]string{
+		eventPauseSet:       "PAUSE_SET",
+		eventThrottleEx1:    "THROTTLE_AXIS_SET_EX1",
+		eventReverseToggle:  "THROTTLE_REVERSE_THRUST_TOGGLE",
+		eventAxisLeftBrake:  "AXIS_LEFT_BRAKE_SET",
+		eventAxisRightBrake: "AXIS_RIGHT_BRAKE_SET",
+		eventSpoilersArmSet: "SPOILERS_ARM_SET",
 	} {
+		client.MapClientEventToSimEvent(id, name)
 		client.AddClientEventToNotificationGroup(notificationGroup, id, false)
 	}
 	client.SetNotificationGroupPriority(notificationGroup, 1)
 }
 
-// RegisterEvent assigns a stable client event ID to an arbitrary SimConnect
-// K:EVENT name, for control/simconnect's generic "kevent" driver — a config-
-// declared event this project has no dedicated Client method for. Safe to
-// call at driver-construction time, before the first connection completes:
-// this only reserves bookkeeping, actual mapping happens in
-// setupGenericEvents on every StateConnected (mirroring how the fixed events
-// above are (re-)mapped on every reconnect, not just the first one).
+// RegisterEvent assigns a stable client event ID to a K:EVENT name. Safe
+// before the first connection: the actual mapping happens in
+// setupGenericEvents on every connect.
 func (c *Client) RegisterEvent(name string) uint32 {
 	c.genericEventsMu.Lock()
 	defer c.genericEventsMu.Unlock()
@@ -315,10 +192,7 @@ func (c *Client) RegisterEvent(name string) uint32 {
 	return id
 }
 
-// setupGenericEvents (re-)maps every name RegisterEvent has assigned an ID
-// to, so a generic "kevent" driver built before the first connection (or
-// still holding IDs from a previous SimConnect session) keeps working after
-// a reconnect.
+// setupGenericEvents re-maps every registered name after a (re)connect.
 func (c *Client) setupGenericEvents(client engine.Client) {
 	c.genericEventsMu.Lock()
 	snapshot := make(map[string]uint32, len(c.genericEvents))
@@ -331,7 +205,7 @@ func (c *Client) setupGenericEvents(client engine.Client) {
 	}
 }
 
-// TransmitNamed fires a previously RegisterEvent-ed K:EVENT by name.
+// TransmitNamed fires a RegisterEvent-ed K:EVENT by name.
 func (c *Client) TransmitNamed(name string, data uint32) error {
 	c.genericEventsMu.Lock()
 	id, ok := c.genericEvents[name]
@@ -343,9 +217,7 @@ func (c *Client) TransmitNamed(name string, data uint32) error {
 }
 
 // ResolveInputEvent returns the current session's hash for a named Input
-// Event, or false if it hasn't been seen in this session's enumeration yet
-// (not connected, this aircraft doesn't expose an event with this name, or
-// the enumeration response just hasn't arrived yet).
+// Event, or false if the enumeration hasn't listed it (yet).
 func (c *Client) ResolveInputEvent(name string) (uint64, bool) {
 	c.inputEventsMu.Lock()
 	defer c.inputEventsMu.Unlock()
@@ -353,30 +225,22 @@ func (c *Client) ResolveInputEvent(name string) (uint64, bool) {
 	return hash, ok
 }
 
-// SetInputEvent writes a DOUBLE-typed Input Event value by name, resolving
-// it against the current session's enumeration (see ResolveInputEvent).
-// MSFS2024-only; fire-and-forget like the classic TransmitClientEvent path
-// (no confirmation the write actually landed).
+// SetInputEvent writes a DOUBLE-typed Input Event by name (MSFS2024 only, fire-and-forget).
 func (c *Client) SetInputEvent(name string, value float64) error {
 	hash, ok := c.ResolveInputEvent(name)
 	if !ok {
 		return fmt.Errorf("simlink: input event %q not found in this session's enumeration", name)
 	}
 	if !c.ready.Load() {
-		return fmt.Errorf("simlink: not connected to MSFS2024 yet")
+		return errNotConnected
 	}
 	return c.mgr.SetInputEventDouble(hash, value)
 }
 
-// watchInputEvents drains the enumeration subscription set up in Connect,
-// logging every descriptor (diagnostic — settles on real data what a given
-// aircraft actually exposes) and caching name->hash so ResolveInputEvent has
-// something to serve. SIMCONNECT_RECV_ENUMERATE_INPUT_EVENTS.RgData is a
-// single-element sentinel array in this binding's Go struct — the real
-// batch, DwArraySize entries long, follows it in the DLL's response buffer,
-// so entries beyond RgData[0] are walked by hand via unsafe pointer
-// arithmetic rather than by indexing the Go array (which would panic past
-// its declared length of 1).
+// watchInputEvents caches name->hash from the enumeration responses.
+// RgData is a single-element sentinel in the binding's Go struct; the real
+// DwArraySize entries follow it in the response buffer, so they are walked
+// with unsafe pointer arithmetic (indexing past RgData[0] would panic).
 func (c *Client) watchInputEvents(messages <-chan engine.Message) {
 	declaredSize := unsafe.Sizeof(types.SIMCONNECT_INPUT_EVENT_DESCRIPTOR{})
 	headerSize := unsafe.Sizeof(types.SIMCONNECT_RECV_LIST_TEMPLATE{})
@@ -394,18 +258,10 @@ func (c *Client) watchInputEvents(messages <-chan engine.Message) {
 			continue
 		}
 
-		// The real per-entry wire stride doesn't necessarily match this
-		// binding's declared SIMCONNECT_INPUT_EVENT_DESCRIPTOR size — hit
-		// live against a real aircraft (a big airliner add-on) with a
-		// naive fixed-size walk and it corrupted progressively worse
-		// entry-by-entry before eventually segfaulting past the message
-		// buffer. guide-facilities.md documents this exact class of
-		// mismatch for a sibling list struct ("the Go struct has alignment
-		// padding that does not match the SimConnect wire format") and
-		// derives the real stride from the message size instead of
-		// trusting unsafe.Sizeof — same fix applied here, plus a hard
-		// bounds check on every read so a still-wrong stride guess can
-		// never walk off the buffer again.
+		// The wire stride can differ from the Go struct's size (alignment
+		// padding). A fixed-size walk corrupted entries and segfaulted past
+		// the buffer on a large airliner add-on, so derive the stride from
+		// the message size and bounds-check every read.
 		base := unsafe.Pointer(recv)
 		dataStart := unsafe.Add(base, headerSize)
 		bufEnd := uintptr(base) + uintptr(msg.Size)
@@ -435,10 +291,9 @@ func (c *Client) watchInputEvents(messages <-chan engine.Message) {
 	}
 }
 
-// setupTelemetryRead registers the aircraft-state data definition and
-// requests an update on every sim frame where any value changed — the phone
-// mirrors the sim as the source of truth, so 1Hz polling showed in-sim
-// changes up to a second late. telemetry.Source caps the send rate.
+// setupTelemetryRead requests the aircraft state on every sim frame where a
+// value changed; 1Hz polling showed in-sim changes up to a second late.
+// telemetry.Source caps the send rate.
 func setupTelemetryRead(client engine.Client) {
 	client.AddToDataDefinition(defAircraftState, "FLAPS HANDLE INDEX", "number", types.SIMCONNECT_DATATYPE_INT32, 0, 0)
 	client.AddToDataDefinition(defAircraftState, "FLAPS NUM HANDLE POSITIONS", "number", types.SIMCONNECT_DATATYPE_INT32, 0, 1)
@@ -466,10 +321,7 @@ func setupTelemetryRead(client engine.Client) {
 	)
 }
 
-// watchTelemetry drains the telemetry subscription set up in Connect,
-// storing each aircraft-state update for LatestState to serve — same
-// latest-value-wins approach as the rest of this protocol, so a slow
-// consumer just sees the newest reading rather than a backlog.
+// watchTelemetry stores each reading for LatestState; a slow consumer sees the newest, not a backlog.
 func (c *Client) watchTelemetry(messages <-chan engine.Message) {
 	for msg := range messages {
 		if msg.Err != nil {
@@ -483,84 +335,50 @@ func (c *Client) watchTelemetry(messages <-chan engine.Message) {
 		if uint32(data.DwRequestID) != reqAircraftState {
 			continue
 		}
-		as := *engine.CastDataAs[aircraftStateData](&data.DwData)
-		c.state.Store(AircraftState{
-			FlapHandleIndex:        as.FlapHandleIndex,
-			FlapNumHandlePositions: as.FlapNumHandlePositions,
-			GearPositionPercent:    as.GearPositionPercent,
-			ThrottleLeverPercent:   as.ThrottleLeverPercent,
-			ParkingBrakeSet:        as.ParkingBrakeSet,
-			StallWarning:           as.StallWarning,
-			OnGround:               as.OnGround,
-			GroundVelocityKnots:    as.GroundVelocityKnots,
-			SpoilersHandlePercent:  as.SpoilersHandlePercent,
-			SpoilersArmed:          as.SpoilersArmed,
-			ElevatorTrim:           as.ElevatorTrim,
-			AutopilotMaster:        as.AutopilotMaster,
-			AutothrottleArmed:      as.AutothrottleArmed,
-			ManagedThrottleActive:  as.ManagedThrottleActive,
-			AirspeedHold:           as.AirspeedHold,
-			MachHold:               as.MachHold,
-		})
+		c.state.Store(*engine.CastDataAs[AircraftState](&data.DwData))
 	}
 }
 
-func (c *Client) transmit(eventID uint32, data uint32) error {
+var errNotConnected = errors.New("simlink: not connected to MSFS2024 yet")
+
+func (c *Client) connected() (engine.Client, error) {
 	if !c.ready.Load() {
-		return fmt.Errorf("simlink: not connected to MSFS2024 yet")
+		return nil, errNotConnected
 	}
 	client := c.mgr.Client()
 	if client == nil {
-		return fmt.Errorf("simlink: not connected to MSFS2024 yet")
+		return nil, errNotConnected
+	}
+	return client, nil
+}
+
+func (c *Client) transmit(eventID, data uint32) error {
+	client, err := c.connected()
+	if err != nil {
+		return err
 	}
 	return client.TransmitClientEvent(types.SIMCONNECT_OBJECT_ID_USER, eventID, data, notificationGroup, 0)
 }
 
-func (c *Client) transmitEx1(eventID uint32, data0 uint32) error {
-	if !c.ready.Load() {
-		return fmt.Errorf("simlink: not connected to MSFS2024 yet")
-	}
-	client := c.mgr.Client()
-	if client == nil {
-		return fmt.Errorf("simlink: not connected to MSFS2024 yet")
+func (c *Client) transmitEx1(eventID, data0 uint32) error {
+	client, err := c.connected()
+	if err != nil {
+		return err
 	}
 	return client.TransmitClientEventEx1(types.SIMCONNECT_OBJECT_ID_USER, eventID, notificationGroup,
 		types.SIMCONNECT_EVENT_FLAG_DEFAULT, [5]uint32{data0, 0, 0, 0, 0})
 }
 
-// SetElevator sends a raw AXIS_ELEVATOR_SET value, range -AxisRange..AxisRange.
-func (c *Client) SetElevator(raw int32) error { return c.transmit(eventAxisElevator, uint32(raw)) }
-
-// SetAileron sends a raw AXIS_AILERONS_SET value, range -AxisRange..AxisRange.
-func (c *Client) SetAileron(raw int32) error { return c.transmit(eventAxisAileron, uint32(raw)) }
-
-// SetThrottle sends a raw THROTTLE_AXIS_SET_EX1 value, range
-// -AxisRange..AxisRange (idle..full power), computed by
-// control/simconnect/throttle.go's toThrottleRaw — same event and range
-// for both forward and reverse (see ToggleReverseThrust): once armed, MSFS
-// applies this same idle..full magnitude as negative/reverse power
-// internally, not because we send a negative raw value ourselves. Uses
-// EX1 exclusively, not the plain AXIS_THROTTLE_SET event, on purpose —
-// mixing the two left the engine stuck unable to return to forward thrust
-// after a reverse pull (confirmed live on a Boeing-like jet); a single
-// consistent write path avoids that.
+// SetThrottle sends a raw THROTTLE_AXIS_SET_EX1 value, -AxisRange..AxisRange
+// (idle..full power). Reverse uses the same magnitude once armed via
+// SetReverseArmed. EX1 only: mixing it with AXIS_THROTTLE_SET left the
+// engine stuck unable to return to forward thrust after a reverse pull.
 func (c *Client) SetThrottle(raw int32) error { return c.transmitEx1(eventThrottleEx1, uint32(raw)) }
 
-// SetReverseArmed fires THROTTLE_REVERSE_THRUST_TOGGLE to reach the wanted
-// arm state for THROTTLE_AXIS_SET_EX1 — each underlying event call flips
-// the sim's state, so this only actually fires it on a real transition
-// (tracked in reverseArmed), a no-op otherwise. Confirmed by an Asobo
-// developer on the MSFS DevSupport forum (devsupport.flightsimulator
-// .com/t/throttle-set-event-ids-explanation/4571): "SET_EX supports
-// reverse thrust (after setting KEY_THROTTLE_REVERSE_THRUST_TOGGLE)... the
-// value of THROTTLE1_AXIS_SET_EX1 will be -1" — this toggle is EX1's
-// actual documented arm mechanism, not the separate/older
-// SET_REVERSE_THRUST_ON/OFF flag event (which doesn't reconcile with EX1
-// and was the earlier cause of a stuck-in-reverse state). One shared
-// tracked state on Client, not duplicated per-caller: throttleEx1Driver
-// (arming on an axis sign transition) and a discrete reverse-arm button
-// both call this, and each guessing its own local arm state independently
-// is exactly how they'd flip each other's work without either noticing.
+// SetReverseArmed brings THROTTLE_REVERSE_THRUST_TOGGLE to the wanted arm
+// state, firing only on a real transition. This toggle is EX1's documented
+// reverse mechanism; the older SET_REVERSE_THRUST_ON/OFF events don't
+// reconcile with EX1 and caused a stuck-in-reverse state.
 func (c *Client) SetReverseArmed(want bool) error {
 	c.reverseArmedMu.Lock()
 	defer c.reverseArmedMu.Unlock()
@@ -574,17 +392,9 @@ func (c *Client) SetReverseArmed(want bool) error {
 	return nil
 }
 
-// SetRudder sends a raw AXIS_RUDDER_SET value, range -AxisRange..AxisRange.
-func (c *Client) SetRudder(raw int32) error { return c.transmit(eventAxisRudder, uint32(raw)) }
-
-// SetToeBrakes drives AXIS_LEFT_BRAKE_SET/AXIS_RIGHT_BRAKE_SET to full
-// (applied) or fully released. Not a proportional control: both axes are
-// documented as non-linear and asymmetric to each other, so there's no
-// usable "brake X%" mapping — this only ever asks for max or nothing.
-// Like AXIS_THROTTLE_SET (see throttle.go), the raw range is signed
-// -AxisRange..AxisRange with 0 at the MIDPOINT, not the released end — 0
-// leaves the brakes roughly half-applied, so a full release must send
-// -AxisRange, not 0.
+// SetToeBrakes drives both brake axes to full or fully released. Not
+// proportional: the axes are non-linear and asymmetric. Raw 0 is the
+// midpoint (half applied), so release must send -AxisRange.
 func (c *Client) SetToeBrakes(applied bool) error {
 	raw := int32(-AxisRange)
 	if applied {
@@ -596,32 +406,8 @@ func (c *Client) SetToeBrakes(applied bool) error {
 	return c.transmit(eventAxisRightBrake, uint32(raw))
 }
 
-// ToggleGear fires GEAR_TOGGLE.
-func (c *Client) ToggleGear() error { return c.transmit(eventGearToggle, 0) }
-
-// ToggleParkingBrake fires PARKING_BRAKES.
-func (c *Client) ToggleParkingBrake() error { return c.transmit(eventParkingBrake, 0) }
-
-// IncrFlaps fires FLAPS_INCR, stepping the flap handle out one detent.
-// There is no SimConnect event to set an exact flap handle index —
-// FLAPS_SET only takes a 0..16383 "closest increment" value, an
-// approximation rejected in favor of the same discrete per-detent taps a
-// real flap handle notch requires.
-func (c *Client) IncrFlaps() error { return c.transmit(eventFlapsIncr, 0) }
-
-// DecrFlaps fires FLAPS_DECR, stepping the flap handle in one detent.
-func (c *Client) DecrFlaps() error { return c.transmit(eventFlapsDecr, 0) }
-
-// SetPause fires PAUSE_SET with an explicit target (1 = pause, 0 = resume),
-// so the pilot can pause the sim from the phone (e.g. before setting it
-// down) without touching the PC. Deliberately not PAUSE_TOGGLE: confirmed
-// live (and matching widely-reported community/DevSupport issues) that
-// PAUSE_TOGGLE reaches SimConnect with no error but MSFS2024 doesn't
-// honor it when sent via TransmitClientEvent — the documented, parameterized
-// PAUSE_SET is the reliable path, same lesson as
-// THROTTLE_AXIS_SET_EX1/THROTTLE_REVERSE_THRUST_TOGGLE over the older
-// ambiguous toggle mechanism. Callers compute the target from Client.Paused()
-// (the real, telemetry-verified state), not a locally-tracked guess.
+// SetPause sets pause explicitly. PAUSE_TOGGLE reaches SimConnect without
+// error but MSFS2024 ignores it via TransmitClientEvent.
 func (c *Client) SetPause(paused bool) error {
 	var data uint32
 	if paused {
@@ -630,21 +416,8 @@ func (c *Client) SetPause(paused bool) error {
 	return c.transmit(eventPauseSet, data)
 }
 
-// IncrSpoilers fires SPOILERS_INC. Experimental (milestone 14): no exact-
-// detent "set spoiler position" event exists in SimConnect, so, same as
-// flaps, deploy/retract is step-based rather than absolute — confirm this
-// gives usable resolution once tested live.
-func (c *Client) IncrSpoilers() error { return c.transmit(eventSpoilersInc, 0) }
-
-// DecrSpoilers fires SPOILERS_DEC. See IncrSpoilers.
-func (c *Client) DecrSpoilers() error { return c.transmit(eventSpoilersDec, 0) }
-
-// SetSpoilersArmed fires SPOILERS_ARM_SET with an explicit target (1 =
-// armed, 0 = disarmed). Deliberately not SPOILERS_ARM_TOGGLE: multiple
-// independent community/DevSupport reports describe it arming successfully
-// but failing to disarm — the same toggle-unreliability class as
-// PAUSE_TOGGLE (see SetPause) — so this uses the explicit-value SET instead.
-// Experimental: not yet confirmed against a live sim.
+// SetSpoilersArmed sets the arm state explicitly. SPOILERS_ARM_TOGGLE is
+// reported to arm but fail to disarm.
 func (c *Client) SetSpoilersArmed(armed bool) error {
 	var data uint32
 	if armed {
@@ -653,17 +426,4 @@ func (c *Client) SetSpoilersArmed(armed bool) error {
 	return c.transmit(eventSpoilersArmSet, data)
 }
 
-// DisconnectAutopilot fires AUTOPILOT_OFF — confirmed via
-// docs.flightsimulator.com's Aircraft Autopilot/Flight Assist Events page as
-// a real, documented explicit-off event ("Turns AP off"). Deliberately not
-// AP_MASTER or AUTOPILOT_DISENGAGE_TOGGLE: both are real too, but this
-// project has hit the toggle-unreliability class of bug twice already
-// (PAUSE_TOGGLE, SPOILERS_ARM_TOGGLE) — an explicit "off" event needs no
-// state to get out of sync with and can't accidentally re-engage the AP the
-// way a toggle could if fired twice (e.g. two of the 3x-redundant BUTTON
-// packets landing on either side of a state change).
-func (c *Client) DisconnectAutopilot() error { return c.transmit(eventAutopilotOff, 0) }
-
-func (c *Client) Close() error {
-	return c.mgr.Stop()
-}
+func (c *Client) Close() error { return c.mgr.Stop() }

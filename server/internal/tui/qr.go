@@ -7,19 +7,11 @@ import (
 	"github.com/skip2/go-qrcode"
 )
 
-// localIPv4 guesses the address a phone on the same LAN would use to reach
-// this server (Server.Status().ListenAddr is just the wildcard bind
-// address, 0.0.0.0:port, and isn't dialable). It asks the OS which local
-// address it'd use to reach the internet — a UDP "connect" sends nothing,
-// it's just a routing-table lookup — rather than taking the first
-// non-loopback interface, whose enumeration order is meaningless and
-// happily returns Docker/VPN/Hyper-V adapters ahead of the real NIC.
-//
-// Still a guess: it's wrong when something NATs between this box and the
-// LAN (VPN split tunnel, container, VM/WSL in NAT mode) — no local API can
-// see past that. alts lists every other candidate address as a manual
-// fallback for that case; the human picks, since they're the one who knows
-// which network the phone is actually on.
+// localIPv4 guesses the LAN address a phone would use. A UDP dial sends
+// nothing; it only asks the routing table, which avoids picking a
+// Docker/VPN/Hyper-V adapter the way interface enumeration order can. It is
+// wrong behind NAT (VPN split tunnel, VM/WSL NAT), so alts lists the other
+// candidates for the user to try.
 func localIPv4() (primary string, alts []string, err error) {
 	conn, err := net.Dial("udp4", "8.8.8.8:80")
 	if err != nil {
@@ -47,12 +39,8 @@ func localIPv4() (primary string, alts []string, err error) {
 	return primary, alts, nil
 }
 
-// connectQR renders a terminal QR code encoding "ip:port" — the exact
-// string connect_screen.dart's manual entry already expects, so scanning
-// it (once the app grows a scanner) needs no new parsing on either side.
-// Medium error-correction: enough resilience for a phone camera at a
-// normal angle without inflating the code's terminal footprint the way
-// High/Highest would.
+// connectQR renders addr ("ip:port") as a terminal QR code. Medium error
+// correction keeps the terminal footprint small.
 func connectQR(addr string) (qr string, err error) {
 	code, err := qrcode.New(addr, qrcode.Medium)
 	if err != nil {

@@ -11,34 +11,26 @@ import (
 	"mhotas/pkg/protocol"
 )
 
-// pollInterval caps the TELEMETRY send rate at ~20Hz. SimConnect itself
-// reports every changed sim frame (see simlink.setupTelemetryRead), which
-// would be far more packets than the phone can use.
+// pollInterval caps the TELEMETRY send rate at ~20Hz; SimConnect reports every changed frame.
 const pollInterval = 50 * time.Millisecond
 
-// keepaliveInterval re-sends unchanged state so a phone that just
-// (re)connected gets the full picture without waiting for something in the
-// sim to change.
+// keepaliveInterval re-sends unchanged state so a freshly connected phone gets the full picture.
 const keepaliveInterval = time.Second
 
-// Source reads live aircraft state from SimConnect (via simlink) and
-// pushes it to a Sink whenever it changes.
+// Source pushes live aircraft state to a Sink whenever it changes.
 type Source struct {
 	client *simlink.Client
 	syncer control.ThrottleSyncer
 }
 
-// NewSource wraps an already-connected simlink.Client — the same
-// connection control/simconnect.Backend writes through, not a second one.
-//
-// syncer, if non-nil, is fed every reading so an input backend that holds
-// its last value (vJoy) can follow the sim's throttle.
+// NewSource reads from an already-connected client. syncer, if non-nil, is
+// fed every reading so a backend that holds its last value (vJoy) can follow
+// the sim's throttle.
 func NewSource(client *simlink.Client, syncer control.ThrottleSyncer) (*Source, error) {
 	return &Source{client: client, syncer: syncer}, nil
 }
 
-// Run polls simlink's latest aircraft-state reading and calls
-// sink.SendTelemetry whenever it changes, until ctx is canceled.
+// Run sends telemetry to sink until ctx is canceled.
 func (s *Source) Run(ctx context.Context, sink Sink) error {
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()

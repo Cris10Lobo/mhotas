@@ -24,8 +24,6 @@ type buttonCall struct {
 	pressed bool
 }
 
-// fakeBackend is an in-memory control.Output for testing the transport
-// layer without needing SimConnect or MSFS.
 type fakeBackend struct {
 	mu      sync.Mutex
 	axes    []axisCall
@@ -63,7 +61,6 @@ func (b *fakeBackend) lastAxis(axis control.AxisID) (float64, bool) {
 	return 0, false
 }
 
-// axisHistory returns every value received for axis, in call order.
 func (b *fakeBackend) axisHistory(axis control.AxisID) []float64 {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -90,7 +87,6 @@ func newTestServer(t *testing.T, cfg config.Config) (*Server, *fakeBackend, *net
 func newTestServerWithConfigPath(t *testing.T, cfg config.Config, configPath string) (*Server, *fakeBackend, *net.UDPConn) {
 	t.Helper()
 	if cfg.ListenPort == 0 {
-		// let the OS pick a free port
 	}
 	backend := &fakeBackend{}
 	log := slog.New(slog.DiscardHandler)
@@ -182,14 +178,12 @@ func TestButtonDeduplicatesByEventID(t *testing.T) {
 	_, backend, client := newTestServer(t, cfg)
 	sendHello(t, client)
 
-	// Same event sent 3x, as the real app does for redundancy.
 	for i := range 3 {
 		pkt := protocol.EncodeButton(uint16(i+2), protocol.Button{ButtonID: 1, Pressed: true, EventID: 100})
 		if _, err := client.Write(pkt); err != nil {
 			t.Fatalf("write BUTTON: %v", err)
 		}
 	}
-	// A stale/older event ID should also be dropped.
 	pkt := protocol.EncodeButton(5, protocol.Button{ButtonID: 1, Pressed: false, EventID: 99})
 	if _, err := client.Write(pkt); err != nil {
 		t.Fatalf("write BUTTON: %v", err)
@@ -263,7 +257,6 @@ func TestConfigSetUpdatesCalibrationPersistsAndEchoes(t *testing.T) {
 		}
 		return c
 	}
-	// Drain the CONFIG sent unprompted right after HELLO_ACK.
 	readConfig()
 
 	pkt := protocol.EncodeConfigSet(2, protocol.ConfigSet{
@@ -299,19 +292,15 @@ func TestConfigSetUpdatesCalibrationPersistsAndEchoes(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 
-	// Persisted to disk, so it survives a restart.
 	loaded, err := config.Load(configPath)
 	if err != nil {
 		t.Fatalf("config.Load after CONFIG_SET: %v", err)
 	}
-	// Wire values are float32 (see AxisCalibration); compare against the
-	// same float64(float32(...)) widening the server applies, not the
-	// float64 literal, which differs in the low bits.
-	if loaded.Throttle.Curve.DeadZone != float64(float32(0.2)) ||
-		loaded.Throttle.Curve.Expo != float64(float32(0.5)) ||
+	if loaded.Throttle.Curve.DeadZone != 0.2 ||
+		loaded.Throttle.Curve.Expo != 0.5 ||
 		!loaded.Throttle.Curve.Invert ||
-		loaded.Throttle.Smoothing != float64(float32(0.1)) {
-		t.Fatalf("persisted throttle config = %+v, want dead_zone ~0.2, expo 0.5, invert true, smoothing ~0.1", loaded.Throttle)
+		loaded.Throttle.Smoothing != 0.1 {
+		t.Fatalf("persisted throttle config = %+v, want dead_zone 0.2, expo 0.5, invert true, smoothing 0.1", loaded.Throttle)
 	}
 	// Failsafe policy, which CONFIG_SET never touches, must survive
 	// unchanged.
@@ -331,7 +320,6 @@ func TestConfigGetRepliesWithCurrentConfig(t *testing.T) {
 	if err := client.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
 		t.Fatalf("SetReadDeadline: %v", err)
 	}
-	// Drain the CONFIG sent unprompted right after HELLO_ACK.
 	if _, err := client.Read(buf); err != nil {
 		t.Fatalf("read initial CONFIG: %v", err)
 	}
@@ -370,8 +358,6 @@ func TestFailsafeNeutralizesAxisAfterTimeout(t *testing.T) {
 		pitch, _ := backend.lastAxis(control.AxisPitch)
 		throttle, _ := backend.lastAxis(control.AxisThrottle)
 		if pitch == 0 && throttle == 1 {
-			// pitch neutralized, throttle held at its last value — matches
-			// the default failsafe policy.
 			return
 		}
 		time.Sleep(20 * time.Millisecond)
@@ -379,8 +365,6 @@ func TestFailsafeNeutralizesAxisAfterTimeout(t *testing.T) {
 	t.Fatal("timed out waiting for failsafe to neutralize pitch while holding throttle")
 }
 
-// signedRecorder stands in for the vJoy backend, recording the
-// signed-throttle settings it's given.
 type signedRecorder struct {
 	fakeBackend
 	signed bool
@@ -418,8 +402,6 @@ func (b *signedRecorder) inverted() bool {
 	return b.invert
 }
 
-// The phone Settings page's signed-throttle toggle and idle slider must
-// reach the backend, at startup and live.
 func TestSignedThrottleSettingsReachBackend(t *testing.T) {
 	cfg := config.Default()
 	cfg.ListenPort = 0
@@ -509,5 +491,11 @@ func TestTelemetryThrottleUndoesCurve(t *testing.T) {
 			t.Fatalf("phone got throttle %v, want 0.5", got.ThrottlePercent)
 		}
 		return
+	}
+}
+
+func TestWidenKeepsShortestDecimal(t *testing.T) {
+	if got := widen(float32(0.05)); got != 0.05 {
+		t.Fatalf("widen(float32(0.05)) = %v, want 0.05", got)
 	}
 }

@@ -1,10 +1,4 @@
-// Command mhotas-server is the PC-side server: it listens for phone
-// control packets over UDP and drives a control.Output backend
-// (log/simconnect).
-//
-// newBackend is implemented per-OS (backend_windows.go / backend_other.go)
-// since the simconnect backend is Windows-only packages — this file
-// must stay buildable on every platform.
+// Command mhotas-server is the PC-side server for the mHOTAS phone app.
 package main
 
 import (
@@ -41,16 +35,12 @@ func run() error {
 	)
 	flag.Parse()
 
-	useTUI := *uiMode == "tui" || (*uiMode == "auto" && isTerminal(os.Stdout))
 	if *uiMode != "auto" && *uiMode != "tui" && *uiMode != "plain" {
 		return fmt.Errorf("unknown -ui %q (want auto, tui, or plain)", *uiMode)
 	}
+	useTUI := *uiMode == "tui" || (*uiMode == "auto" && isTerminal(os.Stdout))
 
-	// TUI mode owns the terminal (alternate screen) — logging straight to
-	// stdout would corrupt it, so route through a tail the dashboard polls
-	// instead of a stream, same reasoning as the app suppressing a moved
-	// widget's own gestures during layout-edit mode: only one thing gets to
-	// own the display surface at a time.
+	// The TUI owns the terminal, so logs must not go to stdout.
 	var tail *tui.LogTail
 	var log *slog.Logger
 	if useTUI {
@@ -109,24 +99,21 @@ func run() error {
 	go func() { serverErr <- srv.Run(ctx) }()
 
 	p := tea.NewProgram(tui.New(srv, backend, tail), tea.WithAltScreen())
-	// A signal (Ctrl+C at the OS level, not the TUI's own 'q'/ctrl+c key
-	// handling) cancels ctx directly — make sure that also tears down the
-	// TUI instead of leaving it on screen after the server's already gone.
+	// A signal cancels ctx without going through the TUI's key handling.
 	go func() {
 		<-ctx.Done()
 		p.Quit()
 	}()
 
 	_, runErr := p.Run()
-	stop() // 'q' in the TUI only quits the TUI; cancel ctx so srv.Run exits too
+	stop() // quitting the TUI must also stop the server
 	if srvErr := <-serverErr; srvErr != nil && runErr == nil {
 		runErr = srvErr
 	}
 	return runErr
 }
 
-// startTelemetryFunc starts streaming live sim state to sink in the
-// background — only backends with a SimConnect read path return one.
+// startTelemetryFunc is nil for backends without a SimConnect read path.
 type startTelemetryFunc func(sink telemetry.Sink)
 
 func isTerminal(f *os.File) bool {

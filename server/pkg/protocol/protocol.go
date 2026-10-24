@@ -1,6 +1,5 @@
-// Package protocol implements the mHOTAS wire format defined in docs/protocol.md.
-// Both the Go server and the Flutter app hand-implement against that document;
-// this package is the Go side of that contract.
+// Package protocol is the Go side of the wire format in docs/protocol.md,
+// hand-mirrored by app/lib/network/protocol.dart.
 package protocol
 
 import (
@@ -10,9 +9,8 @@ import (
 	"math"
 )
 
-// Version is the current protocol version. A HELLO carrying a different
-// version should be rejected with HelloVersionMismatch rather than silently
-// accepted.
+// Version is the protocol version; a HELLO with a different one gets
+// HelloVersionMismatch.
 const Version uint8 = 8
 
 // PacketType identifies the payload that follows the 4-byte Header.
@@ -57,9 +55,8 @@ func (t PacketType) String() string {
 
 const HeaderSize = 4
 
-// NameFieldSize is the width in bytes of the fixed device/server name field
-// used by HELLO and HELLO_ACK. Only NameFieldSize-1 bytes are usable content;
-// the last byte is always left 0 to guarantee a NUL terminator.
+// NameFieldSize is the HELLO/HELLO_ACK name field width; the last byte stays
+// 0 as a NUL terminator.
 const NameFieldSize = 32
 
 type Header struct {
@@ -112,10 +109,7 @@ func decodeName(src []byte) string {
 
 const AxisPacketSize = HeaderSize + 16
 
-// Axis carries continuous stick/throttle/rudder position. The phone applies
-// no dead-zone or curve before sending — that's server-side (see the
-// calibration package) — but does apply its own recenter/zero offset before
-// normalizing, since that corrects for physical grip, not sim response.
+// Axis is sent raw: dead zone and curve are applied server-side.
 type Axis struct {
 	Pitch    float32 // -1..1
 	Roll     float32 // -1..1
@@ -149,9 +143,7 @@ func DecodeAxis(b []byte) (Axis, error) {
 
 const ButtonPacketSize = HeaderSize + 4
 
-// Button carries a single discrete button press/release event. The app sends
-// each event 3x in quick succession so a dropped UDP packet doesn't lose it;
-// EventID lets the receiver de-dupe.
+// Button is sent 3x per event against UDP loss; the receiver dedups by EventID.
 type Button struct {
 	ButtonID uint8
 	Pressed  bool
@@ -184,7 +176,6 @@ func DecodeButton(b []byte) (Button, error) {
 
 const HelloPacketSize = HeaderSize + NameFieldSize
 
-// Hello is sent once by the phone when the user taps "Connect."
 type Hello struct {
 	DeviceName string
 }
@@ -203,7 +194,6 @@ func DecodeHello(b []byte) (Hello, error) {
 	return Hello{DeviceName: decodeName(b[4 : 4+NameFieldSize])}, nil
 }
 
-// HelloAckStatus reports whether the server accepted the HELLO.
 type HelloAckStatus uint8
 
 const (
@@ -213,9 +203,7 @@ const (
 
 const HelloAckPacketSize = HeaderSize + 1 + NameFieldSize
 
-// HelloAck is the server's reply to HELLO. On a version mismatch the server
-// still replies (status=HelloVersionMismatch) rather than staying silent, so
-// the app can show a clear error instead of a generic connection failure.
+// HelloAck is also sent on version mismatch so the app can show a clear error.
 type HelloAck struct {
 	Status     HelloAckStatus
 	ServerName string
@@ -243,8 +231,6 @@ func DecodeHelloAck(b []byte) (HelloAck, error) {
 
 const HeartbeatPacketSize = HeaderSize
 
-// EncodeHeartbeat returns a HEARTBEAT packet — no payload beyond the
-// header; liveness is inferred from receipt alone.
 func EncodeHeartbeat(seq uint16) []byte {
 	buf := make([]byte, HeartbeatPacketSize)
 	encodeHeader(buf, TypeHeartbeat, seq)
@@ -253,7 +239,6 @@ func EncodeHeartbeat(seq uint16) []byte {
 
 // ---- TELEMETRY (0x06) ----
 
-// GearPosition mirrors the landing gear's coarse state.
 type GearPosition uint8
 
 const (
@@ -264,10 +249,7 @@ const (
 
 const TelemetryPacketSize = HeaderSize + 22
 
-// telemetryFlagStallWarning and telemetryFlagOnGround are the bits packed
-// into Telemetry's wire byte 13 (formerly a plain "reserved, must be 0"
-// byte — see docs/protocol.md). Bits 5-7 stay unused headroom for further
-// booleans.
+// Bit flags packed into wire byte 13; bits 5-7 are unused.
 const (
 	telemetryFlagStallWarning       = 1 << 0
 	telemetryFlagOnGround           = 1 << 1
@@ -276,47 +258,22 @@ const (
 	telemetryFlagAutothrottleActive = 1 << 4
 )
 
-// Telemetry carries live aircraft state read from SimConnect, pushed
-// server → phone. A fixed small struct rather than a generic key/value
-// simvar schema.
-//
-// Every field here exists to close a "double lane" gap for something the
-// phone can also command or display: an in-sim change (mouse, keyboard,
-// autothrottle, another control) should show up on the phone instead of the
-// phone silently holding a stale value or guessing state locally.
+// Telemetry is live sim state, so in-sim changes show on the phone instead
+// of it holding stale local state.
 type Telemetry struct {
 	FlapHandleIndex    int8
 	FlapHandleIndexMax int8
 	GearPosition       GearPosition
-	// ParkingBrakeSet is the sim's actual current parking brake state,
-	// independent of the phone's own button-tap history.
-	ParkingBrakeSet bool
-	// ThrottlePercent is the sim's actual current throttle lever position
-	// (-1..1, negative = reverse), independent of whatever the phone last
-	// commanded.
-	ThrottlePercent float32
-	// Paused is the sim's actual current pause state, from SimConnect's own
-	// Pause system event — not a guess based on the phone's last PAUSE tap,
-	// which can't see an external pause/unpause (e.g. the Esc key on the PC).
-	Paused bool
-	// StallWarning mirrors SimConnect's STALL WARNING simvar — drives the
-	// phone's stick-shaker haptic.
-	StallWarning bool
-	// OnGround mirrors SIM ON GROUND — gates the taxi/ground-roll rumble
-	// haptic (never buzzes airborne, e.g. from stale GroundSpeedKnots).
-	OnGround bool
-	// GroundSpeedKnots is GROUND VELOCITY, knots — drives the taxi/ground-
-	// roll rumble's pulse rate.
-	GroundSpeedKnots float32
-	// SpoilersHandle is SPOILERS HANDLE POSITION, 0..1.
-	SpoilersHandle float32
-	SpoilersArmed  bool
-	// ElevatorTrim is ELEVATOR TRIM PCT, -1..1.
-	ElevatorTrim    float32
-	AutopilotMaster bool
-	// AutothrottleActive is set when the sim's autothrottle is driving the
-	// throttle — the phone shows an A/T badge, and the vJoy backend stops
-	// resyncing its throttle axis so it doesn't fight it.
+	ParkingBrakeSet    bool
+	ThrottlePercent    float32 // -1..1, negative = reverse
+	Paused             bool
+	StallWarning       bool
+	OnGround           bool
+	GroundSpeedKnots   float32
+	SpoilersHandle     float32 // 0..1
+	SpoilersArmed      bool
+	ElevatorTrim       float32 // -1..1
+	AutopilotMaster    bool
 	AutothrottleActive bool
 }
 
@@ -377,9 +334,8 @@ func DecodeTelemetry(b []byte) (Telemetry, error) {
 
 // ---- CONFIG (0x07) / CONFIG_SET (0x08) ----
 
-// ConfigAxis selects which axis a CONFIG_SET applies to. Failsafe policy
-// isn't included here — it's a judgment call left in the server's config
-// file, not something the phone edits.
+// ConfigAxis selects the axis a CONFIG_SET applies to. Failsafe is
+// deliberately not phone-editable.
 type ConfigAxis uint8
 
 const (
@@ -389,12 +345,8 @@ const (
 	ConfigAxisRudder   ConfigAxis = 3
 )
 
-// AxisCalibration mirrors calibration.Curve plus the smoothing factor —
-// everything about an axis the phone can see and edit. SignedThrottle/
-// SignedThrottleIdle are only meaningful on the throttle axis (see
-// server/internal/control/simconnect/drivers.go's throttleEx1Driver) —
-// carried on every axis anyway to keep one shared wire block, harmless
-// no-op for pitch/roll/rudder.
+// AxisCalibration is carried on every axis; the signed throttle fields only
+// matter for throttle.
 type AxisCalibration struct {
 	DeadZone           float32
 	Expo               float32
@@ -428,10 +380,7 @@ func decodeAxisCalibration(b []byte) AxisCalibration {
 
 const ConfigPacketSize = HeaderSize + 4*axisCalibrationSize
 
-// Config carries the server's current dead-zone/expo/invert/smoothing for
-// every axis, pushed server → phone right after HELLO_ACK and again after
-// every CONFIG_SET is applied — the same "full snapshot, not a diff"
-// approach TELEMETRY already uses.
+// Config is a full snapshot of every axis, not a diff.
 type Config struct {
 	Pitch, Roll, Throttle, Rudder AxisCalibration
 }
@@ -460,12 +409,6 @@ func DecodeConfig(b []byte) (Config, error) {
 
 const ConfigGetPacketSize = HeaderSize
 
-// EncodeConfigGet returns a CONFIG_GET packet — no payload beyond the
-// header. Sent by the app when a settings screen opens, so it gets the
-// server's current calibration even if it missed the one CONFIG pushed
-// unprompted right after HELLO_ACK (unlike TELEMETRY, CONFIG isn't sent on
-// a recurring timer, so a late subscriber has nothing to fall back on
-// without this).
 func EncodeConfigGet(seq uint16) []byte {
 	buf := make([]byte, ConfigGetPacketSize)
 	encodeHeader(buf, TypeConfigGet, seq)
@@ -474,9 +417,7 @@ func EncodeConfigGet(seq uint16) []byte {
 
 const ConfigSetPacketSize = HeaderSize + 1 + axisCalibrationSize
 
-// ConfigSet is sent phone → server to change one axis's calibration. The
-// server replies with a fresh CONFIG once applied (and persisted, if a
-// config file path is known) — there's no separate ack packet type.
+// ConfigSet is acked by a fresh CONFIG, not a dedicated packet.
 type ConfigSet struct {
 	Axis        ConfigAxis
 	Calibration AxisCalibration

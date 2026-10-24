@@ -1,7 +1,4 @@
-// Command udp-fake-phone sends synthetic mHOTAS AXIS/BUTTON packets to a
-// running mhotas-server, and prints whatever HELLO_ACK/HEARTBEAT/TELEMETRY
-// packets come back. It exists so the server side can be developed and
-// validated end-to-end without a phone or MSFS2024 running.
+// Command udp-fake-phone sends synthetic AXIS/BUTTON packets to mhotas-server and logs what comes back.
 package main
 
 import (
@@ -58,12 +55,7 @@ func sayHello(conn *net.UDPConn, device string) error {
 	return nil
 }
 
-// sendAxisSweep continuously sends a smooth, easily-recognizable pattern —
-// pitch/roll/rudder oscillate, throttle ramps up and down — so a human
-// watching the server's log output (or the aircraft, once wired to
-// SimConnect) can visually confirm packets are being applied correctly.
-// It also sends a BUTTON press/release every 5 seconds, 3x redundantly so
-// a dropped packet doesn't lose the event.
+// sendAxisSweep oscillates the axes and toggles a button every 5s, sent 3x like the real app.
 func sendAxisSweep(conn *net.UDPConn, rate float64) {
 	interval := time.Duration(float64(time.Second) / rate)
 	ticker := time.NewTicker(interval)

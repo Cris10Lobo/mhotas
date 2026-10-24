@@ -61,8 +61,6 @@ func TestCurveExpoPreservesEndpoints(t *testing.T) {
 	if got := c.Apply(0.0); !approxEqual(got, 0.0) {
 		t.Errorf("Apply(0.0) with full expo = %v, want 0.0", got)
 	}
-	// Expo softens response near center: half deflection should produce
-	// less than half the linear output.
 	if got := c.Apply(0.5); got >= 0.5 {
 		t.Errorf("Apply(0.5) with full expo = %v, want < 0.5", got)
 	}

@@ -1,7 +1,6 @@
 //go:build windows
 
-// Package vjoylink is a minimal binding to vJoyInterface.dll, the vJoy
-// virtual joystick driver's user-mode API. Only what control/vjoy needs.
+// Package vjoylink is a minimal binding to vJoyInterface.dll.
 package vjoylink
 
 import (
@@ -26,12 +25,10 @@ const (
 	statFree = 1
 )
 
-// procs is filled once at init and only read afterwards, so concurrent
-// callers (transport's writes, telemetry's throttle resync) need no lock.
+// procs is read-only after init, so concurrent callers need no lock.
 var procs, loadErr = load()
 
-// load tries the normal search path (exe dir first) and then vJoy's own
-// install dir, which the installer doesn't add to PATH.
+// load also tries vJoy's install dir, which the installer doesn't add to PATH.
 func load() (map[string]*syscall.Proc, error) {
 	paths := []string{
 		"vJoyInterface.dll",
@@ -70,24 +67,20 @@ func call(name string, args ...uintptr) (uintptr, error) {
 	return r, nil
 }
 
-// isTrue reads a Win32 BOOL return. Only the low 32 bits are defined; the
-// upper half of the register can hold garbage on x64.
+// isTrue reads a Win32 BOOL: the upper half of the x64 register can hold garbage.
 func isTrue(r uintptr) bool { return uint32(r) != 0 }
 
-// Enabled reports whether the vJoy driver is installed and enabled.
 func Enabled() error {
 	r, err := call("vJoyEnabled")
 	if err != nil {
 		return err
 	}
 	if !isTrue(r) {
-		return fmt.Errorf("vJoy driver not enabled — install vJoy and enable a device in vJoyConf")
+		return fmt.Errorf("vJoy driver not enabled: install vJoy and enable a device in vJoyConf")
 	}
 	return nil
 }
 
-// Acquire takes ownership of device id, failing if another app holds it or
-// it isn't configured.
 func Acquire(id uint32) error {
 	r, err := call("GetVJDStatus", uintptr(id))
 	if err != nil {
@@ -111,14 +104,12 @@ func Acquire(id uint32) error {
 
 func Relinquish(id uint32) { call("RelinquishVJD", uintptr(id)) }
 
-// ReleaseButtons releases every button. Deliberately not ResetVJD: that
-// also recenters every axis, which MSFS would apply as a real input
-// (throttle jumping to mid-travel at server start).
+// ReleaseButtons releases every button. Not ResetVJD: that also recenters
+// every axis, which MSFS applies as real input (throttle jumping to mid-travel).
 func ReleaseButtons(id uint32) { call("ResetButtons", uintptr(id)) }
 
-// AxisMax returns the axis's maximum raw value (its minimum is 0), and
-// false if the axis isn't enabled on the device. Used as the existence
-// check too: GetVJDAxisExist has been unreliable in practice.
+// AxisMax returns the axis's max raw value (min is 0), false if the axis is
+// not enabled. Doubles as the existence check: GetVJDAxisExist is unreliable.
 func AxisMax(id, axis uint32) (int32, bool) {
 	var max int32
 	r, err := call("GetVJDAxisMax", uintptr(id), uintptr(axis), uintptr(unsafe.Pointer(&max)))
@@ -128,7 +119,6 @@ func AxisMax(id, axis uint32) (int32, bool) {
 	return max, true
 }
 
-// ButtonCount returns how many buttons device id has enabled.
 func ButtonCount(id uint32) int {
 	r, err := call("GetVJDButtonNumber", uintptr(id))
 	if err != nil {
