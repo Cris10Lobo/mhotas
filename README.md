@@ -184,9 +184,9 @@ then in the usual MSFS 2024 SDK install folders. Installing the SDK from Develop
 in MSFS is the simplest way to get it.
 
 Pushing a tag like `v0.1.0-alpha.1` builds the APK and the Windows server and attaches them to a
-GitHub release. `SimConnect.dll` isn't in this repo; the release workflow takes it from the
-`SIMCONNECT_DLL_B64` Actions secret, which holds the base64 of the DLL from the MSFS 2024 SDK
-(`C:\MSFS 2024 SDK\SimConnect SDK\lib\SimConnect.dll`).
+GitHub release. `SimConnect.dll` isn't in this repo. The release workflow downloads the newest MSFS
+2024 SDK installer from Microsoft, pulls the DLL out of it and puts it in the server zip. The release
+notes say which SDK version it came from.
 
 ## License
 
