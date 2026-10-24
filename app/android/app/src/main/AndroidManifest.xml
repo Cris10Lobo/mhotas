@@ -1,6 +1,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- Normal-protection-level permission, no runtime prompt — needed by
-         the vibration package for the stall-shaker/taxi-rumble haptics. -->
+    <!-- Flutter only adds INTERNET to debug/profile builds; release needs it for UDP. -->
+    <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.VIBRATE"/>
     <application
         android:label="mHOTAS"
