@@ -2,7 +2,7 @@
   <img src="docs/banner.png" alt="mHOTAS: your phone as a flight stick for Microsoft Flight Simulator 2024">
 </p>
 
-# mHOTAS
+# mHOTAS (Mobile Hands On Throttle And Stick)
 
 [![Go](https://github.com/Cris10Lobo/mhotas/actions/workflows/go.yml/badge.svg)](https://github.com/Cris10Lobo/mhotas/actions/workflows/go.yml)
 [![Flutter](https://github.com/Cris10Lobo/mhotas/actions/workflows/flutter.yml/badge.svg)](https://github.com/Cris10Lobo/mhotas/actions/workflows/flutter.yml)
