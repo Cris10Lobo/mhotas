@@ -1,9 +1,6 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-/// Throttle/rudder values driven by the on-screen sliders in
-/// control_screen.dart. Tilt (pitch/roll) comes from AttitudeStream
-/// directly rather than through Riverpod state, since it updates far more
-/// often (up to 50Hz) than widget-tree state changes should.
+/// Tilt (pitch/roll) bypasses Riverpod: it updates up to 50Hz, too often for widget state.
 class SliderAxisState {
   final double throttle; // -1..1, negative = reverse thrust
   final double rudder; // -1..1

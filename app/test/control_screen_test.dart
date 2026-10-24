@@ -1,13 +1,5 @@
-// Drives the real ControlScreen — real widgets, real UdpClient, real UDP
-// socket — against a tiny fake "server" this test itself runs, and asserts
-// on packets decoded with the app's own protocol.dart. That's viable
-// headless (no emulator, no device) because UdpClient talks UDP via plain
-// dart:io, no platform channel — and a real mhotas-server subprocess isn't
-// needed either, since the Go side's wire->backend mapping is already
-// covered by server/internal/transport/server_test.go's fakeBackend; this
-// file is that same "fake peer, not a real process" pattern mirrored on the
-// Dart side, for the gap that pattern doesn't cover: does the app itself
-// send the right thing.
+// Drives the real ControlScreen and UdpClient against a fake server socket run by
+// the test. Works headless because UdpClient uses plain dart:io, no platform channel.
 import 'dart:async';
 import 'dart:io';
 
@@ -23,16 +15,10 @@ import 'package:mhotas/state/telemetry.dart';
 import 'package:mhotas/ui/control_screen.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-// Gyroscope/tilt is out of scope here (see control_screen.dart's
-// AttitudeStream — motion sensors aren't meaningful off real hardware
-// either), so rotation_sensor's channels have no test binding. Mock them to
-// succeed as a no-op rather than throw, matching what actually happens on
-// a real desktop/CI machine with no rotation sensor.
+// Motion sensors are not testable; mock their channels as no-ops.
 const _rotationSensorChannels = [
   'rotation_sensor/method',
   'rotation_sensor/orientation',
-  // flutter_rotation_sensor's own dependency; only reached by tests that
-  // let real async work run (tester.runAsync).
   'native_device_orientation_events',
 ];
 
@@ -107,8 +93,7 @@ void main() {
       await tester.pumpAndSettle();
       final commandedY = tester.getCenter(knob).dy;
 
-      // The sim's lever is still slewing toward the command, well past any
-      // fixed grace period: mid-travel readings must not drag the knob back.
+      // Sim lever still slewing: mid-travel readings must not drag the knob back.
       controller.add(_telemetry(throttlePercent: 0.1));
       await tester.pumpAndSettle();
       await tester
@@ -168,9 +153,7 @@ void main() {
       await _pumpScreen(tester, overrides: [
         telemetryProvider.overrideWith((ref) => controller.stream),
       ]);
-      // A first-ever reading of GearPosition.down: with no prior telemetry
-      // to compare against, this must not read as a "just locked down"
-      // transition.
+      // First reading of down with no prior telemetry is not a lock transition.
       controller.add(_telemetry(gearPosition: proto.GearPosition.down));
       await tester.pump();
 
@@ -191,15 +174,14 @@ void main() {
       ]);
       controller.add(_telemetry(gearPosition: proto.GearPosition.transit));
       await tester.pump();
-      calls.haptics.clear(); // first packet — nothing to assert on twice
+      calls.haptics.clear();
 
       controller.add(_telemetry(gearPosition: proto.GearPosition.down));
       await tester.pump();
       expect(calls.haptics, ['HapticFeedbackType.heavyImpact']);
       calls.haptics.clear();
 
-      // Entering transit on the way back up: no haptic — only the locked
-      // end states buzz.
+      // Transit on the way back up: no haptic, only locked end states buzz.
       controller.add(_telemetry(gearPosition: proto.GearPosition.transit));
       await tester.pump();
       expect(calls.haptics, isEmpty);
@@ -253,7 +235,7 @@ void main() {
       expect(calls.lastVibrateRepeat, 0);
       calls.vibrations.clear();
 
-      // Still active on the next packet — must not restart the loop.
+      // Must not restart the loop.
       controller.add(_telemetry(stallWarning: true));
       await tester.pump();
       expect(calls.vibrations, isEmpty);
@@ -264,10 +246,7 @@ void main() {
     });
 
     testWidgets('sim pause stops stall shaker and taxi rumble', (tester) async {
-      // Regression test: paused telemetry keeps reporting the last
-      // stallWarning/onGround/groundSpeedKnots values (the sim freezes
-      // rather than clearing them), so both loops used to keep buzzing
-      // straight through a pause.
+      // Regression: frozen stallWarning/onGround values during pause used to keep buzzing.
       final controller = StreamController<proto.Telemetry>();
       addTearDown(controller.close);
       final calls = _recordHaptics();
@@ -313,7 +292,7 @@ void main() {
       controller.add(_telemetry());
       await tester.pump();
 
-      // Parked/stationary — below the lowest band, no rumble.
+      // Below the lowest band: no rumble.
       controller.add(_telemetry(onGround: true, groundSpeedKnots: 1));
       await tester.pump();
       expect(calls.vibrations, isEmpty);
@@ -323,7 +302,7 @@ void main() {
       expect(calls.vibrations, ['vibrate']);
       calls.vibrations.clear();
 
-      // Same band — must not restart the pattern on every packet.
+      // Same band: must not restart the pattern.
       controller.add(_telemetry(onGround: true, groundSpeedKnots: 12));
       await tester.pump();
       expect(calls.vibrations, isEmpty);
@@ -335,7 +314,7 @@ void main() {
 
       controller.add(_telemetry(onGround: false, groundSpeedKnots: 20));
       await tester.pump();
-      expect(calls.vibrations, ['cancel']); // airborne — rumble stops
+      expect(calls.vibrations, ['cancel']);
     });
 
     testWidgets('pause icon reflects telemetry.paused', (tester) async {
@@ -354,10 +333,7 @@ void main() {
                 ))),
       ]);
       await tester.pump();
-      // find.byIcon alone is ambiguous: the tilt indicator has its own,
-      // unrelated pause/play icon (gyroPausedProvider) using the same
-      // Icons.pause/play_arrow pair — go through the AppBar button
-      // specifically, by its stable tooltip.
+      // Use the AppBar button by tooltip; the tilt indicator has its own pause icon.
       final icon = tester.widget<Icon>(find.descendant(
           of: find.byTooltip('Pause'), matching: find.byType(Icon)));
       expect(icon.icon, Icons.play_arrow);
@@ -549,10 +525,7 @@ void main() {
         final axis2 = await server.nextAxis(where: (a) => a.rudder.abs() > 0.1);
         expect(axis2.rudder, greaterThan(0));
 
-        // Let the throttle/rudder spring-back animations finish before the
-        // container gets disposed below — otherwise a ticking
-        // AnimationController's listener can still fire (calling ref.read)
-        // after the container is gone.
+        // Let spring-back animations finish before the container is disposed.
         await tester.pumpAndSettle();
       });
     });
@@ -583,9 +556,7 @@ void main() {
   });
 }
 
-/// Builds a Telemetry with sensible defaults, overriding only the fields a
-/// haptics test cares about — callers must repeat any field they want held
-/// steady across a sequence of packets, since each call is independent.
+/// Telemetry with defaults; callers repeat any field to hold steady across packets.
 proto.Telemetry _telemetry({
   int flapHandleIndex = 0,
   int flapHandleIndexMax = 4,
@@ -613,18 +584,12 @@ proto.Telemetry _telemetry({
       autothrottleActive: autothrottleActive,
     );
 
-/// Records every HapticFeedback (flutter/platform channel) and vibration
-/// package (its own 'vibration' channel) method call made while installed,
-/// so a test can assert on exactly what fired without a real device.
+/// Records HapticFeedback and vibration-package calls made while installed.
 class _HapticRecorder {
   _HapticRecorder() {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(SystemChannels.platform, (call) async {
-      // Every HapticFeedback.* static method funnels through the single
-      // 'HapticFeedback.vibrate' platform method, with the actual variant
-      // passed as the string argument (e.g. 'HapticFeedbackType.heavyImpact')
-      // — see flutter/services/haptic_feedback.dart. Record the variant, not
-      // the (always-identical) method name.
+      // All HapticFeedback.* calls arrive as 'HapticFeedback.vibrate'; record the variant arg.
       if (call.method == 'HapticFeedback.vibrate') {
         haptics.add(call.arguments as String? ?? 'HapticFeedbackType.vibrate');
       }
@@ -658,10 +623,7 @@ class _HapticRecorder {
 
 _HapticRecorder _recordHaptics() => _HapticRecorder();
 
-/// Pumps ControlScreen inside a real-sized MaterialApp so the landscape
-/// control row fits without overflow. Callers either pass [container]
-/// directly (so they can also call `container.read` afterward, e.g. to
-/// connect the UdpClient) or [overrides] for a fresh one.
+/// Pumps ControlScreen in a landscape-sized MaterialApp.
 Future<void> _pumpScreen(
   WidgetTester tester, {
   ProviderContainer? container,
@@ -677,9 +639,7 @@ Future<void> _pumpScreen(
   ));
 }
 
-/// Connects the real UdpClient to [server] and waits for HELLO_ACK to land
-/// (a real round-trip, not an arbitrary delay), then flushes the resulting
-/// rebuild.
+/// Connects the real UdpClient to [server] and waits for HELLO_ACK.
 Future<void> _connect(WidgetTester tester, ProviderContainer container,
     _FakeServer server) async {
   container.read(udpClientProvider).connect('127.0.0.1', server.port);
@@ -694,20 +654,14 @@ Future<void> _connect(WidgetTester tester, ProviderContainer container,
   await tester.pump();
 }
 
-/// Stands in for mhotas-server: replies to HELLO with a hand-built
-/// HELLO_ACK (protocol.dart has no encodeHelloAck — only the Go server ever
-/// sends one) and queues every other packet for the test to decode with the
-/// app's own protocol.dart.
+/// Fake server: answers HELLO with a hand-built HELLO_ACK (protocol.dart has
+/// no encoder for it) and queues every other packet for decoding.
 class _FakeServer {
   _FakeServer._(this._socket);
 
   final RawDatagramSocket _socket;
   final _queue = _PacketQueue();
-  // UdpClient.sendButton fires each event 3x redundantly (see
-  // udp_client.dart) so a dropped packet doesn't lose it — the real server
-  // dedupes by eventId (transport.go's handleButton); this fake one dedupes
-  // by (buttonId, pressed) instead, close enough since nothing here sends
-  // the same edge twice on purpose.
+  // sendButton sends each event 3x; dedupe by (buttonId, pressed).
   (int, bool)? _lastButton;
 
   static Future<_FakeServer> start() async {
@@ -755,17 +709,14 @@ class _FakeServer {
 }
 
 Uint8List _helloAckBytes() {
-  // header(4) + status(1) + name field(32); status 0 = HelloOK, name left
-  // zeroed — nothing here reads the server's name.
+  // header(4) + status(1) + name field(32); status 0 = ok.
   final buf = Uint8List(4 + 1 + proto.nameFieldSize);
   buf[0] = proto.PacketType.helloAck;
   buf[1] = proto.ProtocolVersion.current;
   return buf;
 }
 
-/// Minimal ordered async queue: callers may await [next] before or after
-/// the matching [add] arrives — needed since the fake server's socket
-/// listener and the test's awaits run concurrently in real time.
+/// Async queue where [next] may be awaited before or after [add].
 class _PacketQueue {
   final _pending = <Uint8List>[];
   Completer<Uint8List>? _waiting;

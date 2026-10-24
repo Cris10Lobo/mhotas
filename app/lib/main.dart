@@ -6,14 +6,11 @@ import 'ui/connect_screen.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  // Flying screen is laid out landscape-only (see control_screen.dart) —
-  // lock rotation so it can't flip to portrait mid-flight.
   SystemChrome.setPreferredOrientations([
     DeviceOrientation.landscapeLeft,
     DeviceOrientation.landscapeRight,
   ]);
-  // immersiveSticky over immersive: a stray edge swipe while gripping the
-  // phone shouldn't need a second swipe to dismiss the status/nav bars again.
+  // Sticky so a stray edge swipe while gripping the phone auto-hides the bars again.
   SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
   runApp(const ProviderScope(child: MHotasApp()));
 }

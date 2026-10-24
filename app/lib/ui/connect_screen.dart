@@ -4,8 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../state/connection.dart';
 import '../network/udp_client.dart';
+import '../state/connection.dart';
 import 'control_screen.dart';
 import 'scan_screen.dart';
 
@@ -13,8 +13,6 @@ const _prefsHostKey = 'mhotas.server.host';
 const _prefsPortKey = 'mhotas.server.port';
 const _defaultPort = 9750;
 
-/// Manual IP:port entry, remembered locally — the whole of v1's connection
-/// UX; auto-discovery is a later addition.
 class ConnectScreen extends ConsumerStatefulWidget {
   const ConnectScreen({super.key});
 
@@ -28,18 +26,10 @@ class _ConnectScreenState extends ConsumerState<ConnectScreen> {
   bool _connecting = false;
   String? _error;
 
-  // HELLO over UDP has no delivery guarantee, so this can sit open
-  // indefinitely if the entered address never responds — track it so
-  // dispose() can close it if the user navigates away while still
-  // "connecting", instead of leaking a listener closing over this widget.
+  // Closed in dispose() so an unanswered HELLO doesn't leak the listener.
   ProviderSubscription<AsyncValue<ConnectionStatus>>? _statusSub;
 
-  // HELLO_ACK on a reachable server arrives near-instantly (same LAN, UDP
-  // round trip) — this is generous slack for that, not a real network
-  // timeout budget. Without it, an unreachable address (wrong QR-scanned
-  // IP, firewall, server not running) leaves _statusSub waiting forever
-  // with the button stuck on "Connecting..." and no feedback at all —
-  // reported live, this is that fix.
+  // UDP gives no failure signal; without this an unreachable address leaves the button stuck on "Connecting...".
   static const _connectTimeout = Duration(seconds: 6);
   Timer? _timeoutTimer;
 
@@ -76,7 +66,7 @@ class _ConnectScreenState extends ConsumerState<ConnectScreen> {
     await prefs.setInt(_prefsPortKey, port);
 
     final client = ref.read(udpClientProvider);
-    _statusSub?.close(); // in case a previous attempt never resolved
+    _statusSub?.close();
     _statusSub = ref.listenManual(connectionStatusProvider, (previous, next) {
       final status = next.valueOrNull;
       if (status == null) return;
@@ -91,8 +81,7 @@ class _ConnectScreenState extends ConsumerState<ConnectScreen> {
         if (!mounted) return;
         setState(() {
           _connecting = false;
-          _error =
-              'Server protocol version mismatch — update the app or server';
+          _error = 'Server protocol version mismatch: update the app or server';
         });
       } else if (status == ConnectionStatus.error) {
         _stopWaiting();
@@ -111,7 +100,7 @@ class _ConnectScreenState extends ConsumerState<ConnectScreen> {
       setState(() {
         _connecting = false;
         _error =
-            'Timed out waiting for the server — check it\'s running and the '
+            'Timed out waiting for the server. Check it\'s running and the '
             'address is reachable from this phone';
       });
     });
@@ -149,10 +138,7 @@ class _ConnectScreenState extends ConsumerState<ConnectScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('mHOTAS')),
-      // SingleChildScrollView, not a plain Padding+Column: the "Scan QR
-      // code" button + divider added above the original two fields pushed
-      // total content height past what fits on a shorter screen (or with
-      // the keyboard up), overflowing a fixed Column — reported live.
+      // Scrollable: a fixed Column overflows on short screens or with the keyboard up.
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(24),
         child: Column(

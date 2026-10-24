@@ -3,27 +3,19 @@ import 'dart:math' as math;
 
 import 'package:flutter_rotation_sensor/flutter_rotation_sensor.dart';
 
-/// Normalized phone attitude: pitch/roll in -1..1, matching the AXIS
-/// packet's range. No dead-zone/curve shaping happens here — that's
-/// server-side — but the recenter/zero offset does, since it's correcting
-/// for however the user is currently gripping the phone, not for how the
-/// simulator should respond.
+/// Pitch/roll in -1..1. Only the recenter offset is applied here (it corrects
+/// the current grip); dead-zone and curve are server-side.
 class Attitude {
   final double pitch;
   final double roll;
   const Attitude({required this.pitch, required this.roll});
 }
 
-/// Wraps flutter_rotation_sensor's fused orientation stream (OS-level
-/// sensor fusion — CoreMotion on iOS, the rotation vector sensor on
-/// Android — rather than hand-rolling accelerometer+gyroscope fusion in
-/// Dart). Validated live on a real Android device; motion sensors aren't
-/// meaningful on emulators/simulators so this can't be exercised there.
+/// Wraps flutter_rotation_sensor's OS-fused orientation stream.
 class AttitudeStream {
   AttitudeStream({double maxTiltRadians = math.pi / 4})
       : _maxTiltRadians = maxTiltRadians;
 
-  /// Radians of physical tilt that map to full ±1 deflection. Default ±45°.
   final double _maxTiltRadians;
 
   double _pitchOffset = 0;
@@ -37,19 +29,12 @@ class AttitudeStream {
   Stream<Attitude> get stream => _controller.stream;
 
   void start() {
-    RotationSensor.samplingPeriod = SensorInterval.gameInterval; // ~20ms / 50Hz
+    RotationSensor.samplingPeriod = SensorInterval.gameInterval;
     _subscription = RotationSensor.orientationStream.listen((event) {
-      // flutter_rotation_sensor's own `pitch` is the asin-derived middle
-      // angle of its Euler decomposition, hard-bounded to ±90° — and that
-      // singularity lands exactly on the axis this app rotates around for
-      // a "yoke" pull (confirmed live: normal grip already sits ~50-55°
-      // raw, leaving only ~35-40° of headroom before the ±90° ceiling,
-      // which is what made full deflection unreachable and roll snap near
-      // it). Remapping the device axes swaps which physical rotation lands
-      // in the bounded slot: bank (small-motion in practice, rotating
-      // about the phone's long axis) now takes the bounded one, and pitch
-      // (the full-range one in practice) reads from the atan2-derived
-      // `roll` field instead, which has no ±90° ceiling.
+      // The plugin's `pitch` is asin-derived and capped at ±90°, and a normal
+      // grip already sits at ~50-55° there, so full yoke deflection was
+      // unreachable. Remapping puts bank in the capped slot and reads pitch
+      // from the uncapped atan2-derived `roll`.
       final remapped = event.remapCoordinateSystem(-Axis3.Y, Axis3.X);
       _lastRawPitch = remapped.eulerAngles.roll;
       _lastRawRoll = remapped.eulerAngles.pitch;
@@ -57,9 +42,7 @@ class AttitudeStream {
     });
   }
 
-  /// Captures the current raw orientation as the new zero point. Call this
-  /// when the user taps "recenter" while gripping the phone the way they
-  /// intend to fly with it.
+  /// Takes the current raw orientation as zero.
   void recenter() {
     _pitchOffset = _lastRawPitch;
     _rollOffset = _lastRawRoll;
