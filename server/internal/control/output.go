@@ -11,6 +11,7 @@ const (
 	AxisRoll
 	AxisThrottle
 	AxisRudder
+	AxisSpeedbrake // 0..1, not -1..1
 )
 
 func (a AxisID) String() string {
@@ -23,6 +24,8 @@ func (a AxisID) String() string {
 		return "throttle"
 	case AxisRudder:
 		return "rudder"
+	case AxisSpeedbrake:
+		return "speedbrake"
 	default:
 		return fmt.Sprintf("axis(%d)", uint8(a))
 	}
@@ -51,10 +54,11 @@ const (
 )
 
 var axisNames = map[string]AxisID{
-	"pitch":    AxisPitch,
-	"roll":     AxisRoll,
-	"throttle": AxisThrottle,
-	"rudder":   AxisRudder,
+	"pitch":      AxisPitch,
+	"roll":       AxisRoll,
+	"throttle":   AxisThrottle,
+	"rudder":     AxisRudder,
+	"speedbrake": AxisSpeedbrake,
 }
 
 var buttonNames = map[string]ButtonID{

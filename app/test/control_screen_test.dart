@@ -415,7 +415,7 @@ void main() {
       });
     });
 
-    testWidgets('speedbrake lever drag sends incr then decr taps',
+    testWidgets('speedbrake lever drag sends the speedbrake axis',
         (tester) async {
       await tester.runAsync(() async {
         final server = await _FakeServer.start();
@@ -432,14 +432,12 @@ void main() {
                 (w) => w.runtimeType.toString() == '_SpeedbrakeLever'));
 
         await tester.drag(lever, const Offset(0, -80));
-        final incr = await server.nextButton();
-        expect(incr.buttonId, ButtonIds.spoilerIncr);
-        expect((await server.nextButton()).pressed, isFalse); // release
+        final up = await server.nextAxis(where: (a) => a.speedbrake > 0.3);
+        expect(up.speedbrake, lessThanOrEqualTo(1));
 
-        await tester.drag(lever, const Offset(0, 80));
-        final decr = await server.nextButton();
-        expect(decr.buttonId, ButtonIds.spoilerDecr);
-        expect((await server.nextButton()).pressed, isFalse); // release
+        // Back past the retract snap band lands exactly on 0.
+        await tester.drag(lever, const Offset(0, 200));
+        await server.nextAxis(where: (a) => a.speedbrake == 0);
       });
     });
 

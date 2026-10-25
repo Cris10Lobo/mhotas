@@ -31,6 +31,9 @@ func defaultMappings() map[string]config.ControlMapping {
 		"roll":     {Driver: driverKEvent, Event: "AXIS_AILERONS_SET"},
 		"rudder":   {Driver: driverKEvent, Event: "AXIS_RUDDER_SET"},
 		"throttle": {Driver: driverThrottleEx1},
+		// An absolute position, unlike SPOILERS_INC/DEC, which some aircraft
+		// (FBW A32NX) ignore.
+		"speedbrake": {Driver: driverKEvent, Event: "SPOILERS_SET"},
 
 		"gear":                 {Driver: driverKEvent, Event: "GEAR_TOGGLE"},
 		"parking_brake":        {Driver: driverKEvent, Event: "PARKING_BRAKES"},

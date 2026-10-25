@@ -17,7 +17,7 @@ Every packet starts with a 4-byte header:
 | Offset | Size | Field           | Notes                                              |
 |--------|------|-----------------|-----------------------------------------------------|
 | 0      | 1    | `type`          | See packet type table below                        |
-| 1      | 1    | `version`       | Protocol version, currently `8`                     |
+| 1      | 1    | `version`       | Protocol version, currently `9`                     |
 | 2      | 2    | `seq`           | uint16, per-packet-type sequence number, wraps at 65535 |
 
 ## Packet types
@@ -34,7 +34,7 @@ Every packet starts with a 4-byte header:
 | 0x08 | `CONFIG_SET` | phone → server   | on a calibration edit           |
 | 0x09 | `CONFIG_GET` | phone → server   | on settings screen open         |
 
-### `AXIS` (0x01), 20 bytes total
+### `AXIS` (0x01), 24 bytes total
 
 | Offset | Size | Field      | Range          |
 |--------|------|------------|----------------|
@@ -42,10 +42,13 @@ Every packet starts with a 4-byte header:
 | 8      | 4    | `roll`     | float32, -1..1 |
 | 12     | 4    | `throttle` | float32, -1..1 (negative = reverse thrust) |
 | 16     | 4    | `rudder`   | float32, -1..1 |
+| 20     | 4    | `speedbrake` | float32, 0..1 (0 = retracted) |
 
 No dead-zone or curve is applied on the phone. It sends raw normalized tilt/slider position. The
 server applies dead-zone, expo curve, invert, and range conversion for the active `ControlOutput`
-backend (see `server/internal/calibration` and `server/internal/control`). The phone *does* apply the
+backend (see `server/internal/calibration` and `server/internal/control`). `speedbrake` is the
+exception: no calibration, only clamped to 0..1. It is an axis rather than INC/DEC buttons (as it was
+through v8) because some aircraft (FBW A32NX) only accept an absolute speedbrake position. The phone *does* apply the
 recenter/zero offset before normalizing, since that's correcting for physical grip, not sim response.
 
 ### `BUTTON` (0x02), 8 bytes total
@@ -218,6 +221,7 @@ If the server stops receiving `AXIS` packets for **500ms** (configurable), it ap
 | roll     | snap to 0 (neutral) |
 | rudder   | snap to 0 (neutral) |
 | throttle | hold last value      |
+| speedbrake | hold last value (not configurable) |
 
 Buttons are stateless events, not held, so no failsafe action needed for them. This default was chosen
 because an unattended tilt input is a "hands off" signal and should neutralize, while an unexpected

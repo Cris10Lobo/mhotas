@@ -20,14 +20,15 @@ import (
 const deviceID = 1
 
 var axisUsage = map[control.AxisID]uint32{
-	control.AxisPitch:    vjoylink.AxisY,
-	control.AxisRoll:     vjoylink.AxisX,
-	control.AxisThrottle: vjoylink.AxisZ,
-	control.AxisRudder:   vjoylink.AxisRZ,
+	control.AxisPitch:      vjoylink.AxisY,
+	control.AxisRoll:       vjoylink.AxisX,
+	control.AxisThrottle:   vjoylink.AxisZ,
+	control.AxisRudder:     vjoylink.AxisRZ,
+	control.AxisSpeedbrake: vjoylink.AxisRX,
 }
 
 var axisLetter = map[uint32]string{
-	vjoylink.AxisX: "X", vjoylink.AxisY: "Y", vjoylink.AxisZ: "Z", vjoylink.AxisRZ: "Rz",
+	vjoylink.AxisX: "X", vjoylink.AxisY: "Y", vjoylink.AxisZ: "Z", vjoylink.AxisRX: "Rx", vjoylink.AxisRZ: "Rz",
 }
 
 // Sim is the SimConnect connection kept open for telemetry; Backend owns closing it.
@@ -92,13 +93,18 @@ func (b *Backend) Name() string { return "vjoy" }
 
 func (b *Backend) SetAxis(id control.AxisID, value float64) error {
 	a := b.axes[id]
-	if id != control.AxisThrottle {
+	switch id {
+	case control.AxisThrottle:
+		b.throttleMu.Lock()
+		defer b.throttleMu.Unlock()
+		b.sync.wrote(time.Now())
+		return b.writeThrottle(value)
+	case control.AxisSpeedbrake:
+		// Retracted = axis minimum, like a hardware speedbrake lever.
+		return vjoylink.SetAxis(deviceID, a.usage, toRaw(value*2-1, a.max))
+	default:
 		return vjoylink.SetAxis(deviceID, a.usage, toRaw(value, a.max))
 	}
-	b.throttleMu.Lock()
-	defer b.throttleMu.Unlock()
-	b.sync.wrote(time.Now())
-	return b.writeThrottle(value)
 }
 
 // SyncThrottle implements control.ThrottleSyncer.

@@ -58,7 +58,7 @@ Use vJoy, a virtual joystick you bind in MSFS's controls menu like any other dev
 | Rudder | Drag left or right. Springs back to center when you let go. |
 | Trim ▲ ▼ | Elevator trim. Hold to keep trimming. The percentage is the sim's trim position. |
 | AP (AP DISC) | Disconnects the autopilot. Lit while the autopilot is on. |
-| Speedbrake (SPD) | Drag between the detents to deploy. ARM toggles auto spoilers. |
+| Speedbrake (SPD) | Drag to deploy, from 0 (retracted) to 1 (full). ARM toggles auto spoilers. |
 | Flaps (FLAP) | Drag to the notch you want. Follows the sim if you move flaps there. |
 | Gear | Tap to raise or lower. Shows UP, DOWN or in transit. |
 | Park brake (P) | Tap to toggle the parking brake. |
@@ -113,7 +113,7 @@ With a free Apple ID the app stops launching after 7 days and you'll have to run
 ### 3. Set up vJoy
 
 1. Install vJoy and open Configure vJoy.
-2. On device 1, enable the axes X, Y, Z and Rz, set the number of buttons to 15, and click Apply.
+2. On device 1, enable the axes X, Y, Z, Rx and Rz, set the number of buttons to 15, and click Apply.
 
 ### 4. Start the server
 
@@ -145,12 +145,13 @@ when it starts.
 | X | roll | Ailerons axis |
 | Z | throttle | Throttle axis (`-100 to 100%` if signed reverse thrust is on, otherwise `0 to 100%`) |
 | Rz | rudder | Rudder axis |
+| Rx | speedbrake | Spoilers axis |
 | 1 | gear | Toggle landing gear |
 | 2 | parking brake | Toggle parking brake |
 | 3 | pause | Toggle pause |
 | 4 / 5 | flaps up / down | Increase / decrease flaps |
 | 6 | toe brake | Brakes (hold) |
-| 7 / 8 | spoilers up / down | Increase / decrease spoilers |
+| 7 / 8 | unused (were spoilers up / down) | |
 | 9 | spoiler arm | Toggle arm spoilers |
 | 10 | autopilot disconnect | Autopilot off |
 | 11 / 12 | trim up / down | Elevator trim up / down |
@@ -186,7 +187,7 @@ modes on its own.
   and that Windows Firewall allows mhotas-server. Guest Wi-Fi networks often block devices from
   talking to each other.
 - The server exits saying a vJoy axis or button is missing: open Configure vJoy and check device 1 has
-  X, Y, Z, Rz and 15 buttons.
+  X, Y, Z, Rx, Rz and 15 buttons.
 - Controls do nothing in the sim: check the bindings in MSFS are on the vJoy Device, not your keyboard
   or another controller profile.
 - The server logs an error about SimConnect.dll: `SimConnect.dll` has to be in the same folder as

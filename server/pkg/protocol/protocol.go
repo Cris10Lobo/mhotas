@@ -11,7 +11,7 @@ import (
 
 // Version is the protocol version; a HELLO with a different one gets
 // HelloVersionMismatch.
-const Version uint8 = 8
+const Version uint8 = 9
 
 // PacketType identifies the payload that follows the 4-byte Header.
 type PacketType uint8
@@ -107,14 +107,15 @@ func decodeName(src []byte) string {
 
 // ---- AXIS (0x01) ----
 
-const AxisPacketSize = HeaderSize + 16
+const AxisPacketSize = HeaderSize + 20
 
 // Axis is sent raw: dead zone and curve are applied server-side.
 type Axis struct {
-	Pitch    float32 // -1..1
-	Roll     float32 // -1..1
-	Throttle float32 // -1..1, negative = reverse thrust
-	Rudder   float32 // -1..1
+	Pitch      float32 // -1..1
+	Roll       float32 // -1..1
+	Throttle   float32 // -1..1, negative = reverse thrust
+	Rudder     float32 // -1..1
+	Speedbrake float32 // 0..1
 }
 
 func EncodeAxis(seq uint16, a Axis) []byte {
@@ -124,6 +125,7 @@ func EncodeAxis(seq uint16, a Axis) []byte {
 	binary.LittleEndian.PutUint32(buf[8:12], math.Float32bits(a.Roll))
 	binary.LittleEndian.PutUint32(buf[12:16], math.Float32bits(a.Throttle))
 	binary.LittleEndian.PutUint32(buf[16:20], math.Float32bits(a.Rudder))
+	binary.LittleEndian.PutUint32(buf[20:24], math.Float32bits(a.Speedbrake))
 	return buf
 }
 
@@ -132,10 +134,11 @@ func DecodeAxis(b []byte) (Axis, error) {
 		return Axis{}, fmt.Errorf("protocol: AXIS packet too short: %d bytes", len(b))
 	}
 	return Axis{
-		Pitch:    math.Float32frombits(binary.LittleEndian.Uint32(b[4:8])),
-		Roll:     math.Float32frombits(binary.LittleEndian.Uint32(b[8:12])),
-		Throttle: math.Float32frombits(binary.LittleEndian.Uint32(b[12:16])),
-		Rudder:   math.Float32frombits(binary.LittleEndian.Uint32(b[16:20])),
+		Pitch:      math.Float32frombits(binary.LittleEndian.Uint32(b[4:8])),
+		Roll:       math.Float32frombits(binary.LittleEndian.Uint32(b[8:12])),
+		Throttle:   math.Float32frombits(binary.LittleEndian.Uint32(b[12:16])),
+		Rudder:     math.Float32frombits(binary.LittleEndian.Uint32(b[16:20])),
+		Speedbrake: math.Float32frombits(binary.LittleEndian.Uint32(b[20:24])),
 	}, nil
 }
 

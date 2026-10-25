@@ -16,6 +16,7 @@ const (
 	AxisX  uint32 = 0x30
 	AxisY  uint32 = 0x31
 	AxisZ  uint32 = 0x32
+	AxisRX uint32 = 0x33
 	AxisRZ uint32 = 0x35
 )
 

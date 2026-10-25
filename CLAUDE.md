@@ -123,8 +123,8 @@ needs it); `--input` (or the TUI picker when the flag is absent) then picks exac
 `control/vjoy` or `control/simconnect`, separate backends that never mix (a deliberate choice: an
 earlier per-control/whole-server fallback was removed as not worth its complexity). vJoy mode opens a
 plain `simlink` connection for telemetry only, and fails at startup if the device lacks any axis or
-button it drives. vJoy's mapping is fixed (pitch=Y, roll=X, throttle=Z, rudder=Rz, button N = `ButtonID`
-N) since the MSFS binding is where meaning is set.
+button it drives. vJoy's mapping is fixed (pitch=Y, roll=X, throttle=Z, rudder=Rz, speedbrake=Rx,
+button N = `ButtonID` N) since the MSFS binding is where meaning is set.
 
 Throttle values pass through several spaces, and most bugs on this branch were a transform in the wrong
 one: phone lever → `calibration.Curve` (dead zone/expo; *not* invert, see below) → backend

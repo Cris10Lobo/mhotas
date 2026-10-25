@@ -27,8 +27,6 @@ class ButtonIds {
   static const int flapIncr = 4;
   static const int flapDecr = 5;
   static const int toeBrake = 6;
-  static const int spoilerIncr = 7;
-  static const int spoilerDecr = 8;
   static const int spoilerArm = 9;
   static const int autopilotDisconnect = 10;
   static const int trimUp = 11;
@@ -87,6 +85,7 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
               gyroPaused ? 0 : (manualJoystick ? _joystick.dx : _attitude.roll),
           throttle: slider.throttle,
           rudder: slider.rudder,
+          speedbrake: slider.speedbrake,
         ));
   }
 
@@ -298,10 +297,9 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
                                 ),
                                 const SizedBox(height: 8),
                                 _SpeedbrakeLever(
-                                  onStep: (n) => _stepButton(
-                                      ButtonIds.spoilerIncr,
-                                      ButtonIds.spoilerDecr,
-                                      n),
+                                  onChanged: (v) => ref
+                                      .read(sliderAxisProvider.notifier)
+                                      .setSpeedbrake(v),
                                   synced: telemetry?.spoilersHandle,
                                 ),
                               ],
@@ -1451,16 +1449,16 @@ class _BigButton extends StatelessWidget {
   }
 }
 
-/// Speedbrake lever with detents 0..2. Crossing a detent sends one
-/// SPOILERS_INC/DEC tap.
+/// Speedbrake lever, 0 (retracted) .. 1 (full), sent as an axis: some
+/// aircraft (FBW A32NX) ignore the SPOILERS_INC/DEC step events.
 ///
-/// [synced] is SPOILERS HANDLE POSITION (0..1); the knob sits at the nearest
-/// detent while not dragging.
+/// [synced] is SPOILERS HANDLE POSITION (0..1). The lever mirrors it except
+/// while dragging and until the sim's handle stops moving after a drag, so
+/// a slewing handle doesn't drag the knob back mid-travel.
 class _SpeedbrakeLever extends StatefulWidget {
-  const _SpeedbrakeLever({required this.onStep, this.synced});
+  const _SpeedbrakeLever({required this.onChanged, this.synced});
 
-  /// Positive = SPOILERS_INC taps, negative = SPOILERS_DEC taps.
-  final ValueChanged<int> onStep;
+  final ValueChanged<double> onChanged;
   final double? synced;
 
   @override
@@ -1468,46 +1466,51 @@ class _SpeedbrakeLever extends StatefulWidget {
 }
 
 class _SpeedbrakeLeverState extends State<_SpeedbrakeLever> {
-  static const _detentMax = 2;
   static const _height = 160.0;
   static const _knobHeight = 32.0;
 
-  double _dragValue = 0; // fractional position while dragging, 0.._detentMax
-  int _detent = 0;
+  // A release below this retracts fully; a sliver of speedbrake is never wanted.
+  static const _retractSnapBand = 0.03;
+
+  double _value = 0;
   bool _dragging = false;
+  DateTime _lastLocalCommandAt = DateTime.fromMillisecondsSinceEpoch(0);
+  double? _lastSynced;
+  DateTime _syncedMovedAt = DateTime.fromMillisecondsSinceEpoch(0);
+  static const _simSettleTime = Duration(milliseconds: 500);
 
   @override
   void didUpdateWidget(covariant _SpeedbrakeLever oldWidget) {
     super.didUpdateWidget(oldWidget);
     final synced = widget.synced;
-    if (_dragging || synced == null) return;
-    final detent = (synced * _detentMax).round().clamp(0, _detentMax);
-    if (detent != _detent) {
-      _detent = detent;
-      _dragValue = detent.toDouble();
+    if (synced == null) return;
+    final now = DateTime.now();
+    if (_lastSynced == null || (synced - _lastSynced!).abs() > 0.005) {
+      _syncedMovedAt = now;
     }
+    _lastSynced = synced;
+    final quietSince = _syncedMovedAt.isAfter(_lastLocalCommandAt)
+        ? _syncedMovedAt
+        : _lastLocalCommandAt;
+    if (_dragging || now.difference(quietSince) < _simSettleTime) return;
+    _value = synced;
   }
 
-  void _onDragStart(DragStartDetails details) {
-    _dragging = true;
-    _dragValue = _detent.toDouble();
+  void _command(double value) {
+    setState(() => _value = value);
+    _lastLocalCommandAt = DateTime.now();
+    widget.onChanged(value);
   }
+
+  void _onDragStart(DragStartDetails details) => _dragging = true;
 
   void _onDragUpdate(DragUpdateDetails details) {
-    setState(() {
-      _dragValue = (_dragValue - details.delta.dy / (_height / _detentMax))
-          .clamp(0.0, _detentMax.toDouble());
-    });
-    final newDetent = _dragValue.round();
-    if (newDetent != _detent) {
-      widget.onStep(newDetent - _detent);
-      _detent = newDetent;
-    }
+    _command((_value - details.delta.dy / _height).clamp(0.0, 1.0));
   }
 
   void _onDragEnd(DragEndDetails details) {
     _dragging = false;
-    setState(() => _dragValue = _detent.toDouble());
+    if (_value < _retractSnapBand) _command(0);
   }
 
   @override
@@ -1536,14 +1539,14 @@ class _SpeedbrakeLeverState extends State<_SpeedbrakeLever> {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Text('2', style: TextStyle(fontSize: 10)),
                   Text('1', style: TextStyle(fontSize: 10)),
+                  Text('½', style: TextStyle(fontSize: 10)),
                   Text('0', style: TextStyle(fontSize: 10)),
                 ],
               ),
             ),
             Align(
-              alignment: Alignment(0, 1 - (_dragValue / _detentMax) * 2),
+              alignment: Alignment(0, 1 - _value * 2),
               child: Container(
                 width: 40,
                 height: _knobHeight,

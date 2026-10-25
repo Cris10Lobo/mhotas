@@ -279,6 +279,8 @@ func (s *Server) handleAxis(addr *net.UDPAddr, data []byte) {
 	s.applyAxis(control.AxisRoll, float64(axis.Roll), s.axisConfig(control.AxisRoll))
 	s.applyAxis(control.AxisThrottle, float64(axis.Throttle), s.axisConfig(control.AxisThrottle))
 	s.applyAxis(control.AxisRudder, float64(axis.Rudder), s.axisConfig(control.AxisRudder))
+	// No calibration and no failsafe: a lever position, held like throttle.
+	s.applyAxis(control.AxisSpeedbrake, clamp01(float64(axis.Speedbrake)), config.AxisConfig{})
 }
 
 func (s *Server) applyAxis(id control.AxisID, raw float64, ac config.AxisConfig) {

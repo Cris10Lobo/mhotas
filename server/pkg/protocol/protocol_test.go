@@ -6,7 +6,7 @@ import (
 )
 
 func TestAxisRoundTrip(t *testing.T) {
-	want := Axis{Pitch: -0.5, Roll: 0.75, Throttle: 1.0, Rudder: -1.0}
+	want := Axis{Pitch: -0.5, Roll: 0.75, Throttle: 1.0, Rudder: -1.0, Speedbrake: 0.25}
 	buf := EncodeAxis(42, want)
 	if len(buf) != AxisPacketSize {
 		t.Fatalf("EncodeAxis: got %d bytes, want %d", len(buf), AxisPacketSize)

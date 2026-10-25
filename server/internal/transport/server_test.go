@@ -150,7 +150,7 @@ func TestAxisAppliesCalibrationAndReachesBackend(t *testing.T) {
 	_, backend, client := newTestServer(t, cfg)
 	sendHello(t, client)
 
-	pkt := protocol.EncodeAxis(2, protocol.Axis{Pitch: 0.5, Roll: 0.25, Throttle: 0.8, Rudder: -0.3})
+	pkt := protocol.EncodeAxis(2, protocol.Axis{Pitch: 0.5, Roll: 0.25, Throttle: 0.8, Rudder: -0.3, Speedbrake: 1.5})
 	if _, err := client.Write(pkt); err != nil {
 		t.Fatalf("write AXIS: %v", err)
 	}
@@ -164,6 +164,9 @@ func TestAxisAppliesCalibrationAndReachesBackend(t *testing.T) {
 			roll, _ := backend.lastAxis(control.AxisRoll)
 			if roll != 0.25 {
 				t.Fatalf("roll = %v, want 0.25", roll)
+			}
+			if sb, _ := backend.lastAxis(control.AxisSpeedbrake); sb != 1 {
+				t.Fatalf("speedbrake = %v, want 1 (clamped)", sb)
 			}
 			return
 		}
@@ -348,7 +351,7 @@ func TestFailsafeNeutralizesAxisAfterTimeout(t *testing.T) {
 	_, backend, client := newTestServer(t, cfg)
 	sendHello(t, client)
 
-	pkt := protocol.EncodeAxis(2, protocol.Axis{Pitch: 1, Roll: 1, Throttle: 1, Rudder: 1})
+	pkt := protocol.EncodeAxis(2, protocol.Axis{Pitch: 1, Roll: 1, Throttle: 1, Rudder: 1, Speedbrake: 0.5})
 	if _, err := client.Write(pkt); err != nil {
 		t.Fatalf("write AXIS: %v", err)
 	}
@@ -357,7 +360,8 @@ func TestFailsafeNeutralizesAxisAfterTimeout(t *testing.T) {
 	for time.Now().Before(deadline) {
 		pitch, _ := backend.lastAxis(control.AxisPitch)
 		throttle, _ := backend.lastAxis(control.AxisThrottle)
-		if pitch == 0 && throttle == 1 {
+		speedbrake, _ := backend.lastAxis(control.AxisSpeedbrake)
+		if pitch == 0 && throttle == 1 && speedbrake == 0.5 {
 			return
 		}
 		time.Sleep(20 * time.Millisecond)
