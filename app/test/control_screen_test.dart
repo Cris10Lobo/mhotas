@@ -75,6 +75,29 @@ void main() {
       expect(find.text('A/T'), findsNothing);
     });
 
+    testWidgets('flap lever drops a detent one tap jumps over (FBW A32NX)',
+        (tester) async {
+      final controller = StreamController<proto.Telemetry>();
+      addTearDown(controller.close);
+      await _pumpScreen(tester, overrides: [
+        telemetryProvider.overrideWith((ref) => controller.stream),
+      ]);
+      controller.add(_telemetry(flapHandleIndexMax: 5));
+      await tester.pumpAndSettle();
+      expect(find.text('0/5'), findsOneWidget);
+
+      // One detent down sends one FLAPS_INCR; the A32NX lands on index 2.
+      await tester.drag(
+          find.byKey(const Key('flapLever')), const Offset(0, 32));
+      await tester.pumpAndSettle();
+      controller.add(_telemetry(flapHandleIndex: 2, flapHandleIndexMax: 5));
+      await tester.pumpAndSettle();
+      await tester
+          .runAsync(() => Future.delayed(const Duration(milliseconds: 600)));
+      await tester.pump();
+      expect(find.text('1/4'), findsOneWidget);
+    });
+
     testWidgets(
         'throttle lever ignores sim readings after a drag until the sim stops moving',
         (tester) async {

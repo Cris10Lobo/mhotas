@@ -1124,6 +1124,9 @@ class _ThrottleLeverState extends State<_ThrottleLever>
 /// one INCR/DECR tap per detent crossed.
 ///
 /// [synced] is the sim's flap handle index, mirrored while not dragging.
+/// Detents are the indices the handle actually stops at, learned as it moves:
+/// FLAPS NUM HANDLE POSITIONS can overcount (the FBW A32NX reports 0..5, but
+/// one FLAPS_INCR from 0 lands on 2).
 class _FlapLever extends StatefulWidget {
   const _FlapLever(
       {required this.onStep, required this.synced, required this.max});
@@ -1152,7 +1155,40 @@ class _FlapLeverState extends State<_FlapLever> {
 
   int get _max => widget.max ?? 0;
 
-  double _fractionFor(int index) => _max == 0 ? 0 : index / _max;
+  final _unreachable = <int>{};
+  // The sim index a single tap left from; learning needs exactly one tap.
+  int? _singleStepFrom;
+
+  List<int> get _detents => [
+        for (var i = 0; i <= _max; i++)
+          if (!_unreachable.contains(i)) i
+      ];
+
+  int _ordinalOf(int index) => _detents.where((d) => d < index).length;
+
+  double _fractionFor(int index) {
+    final n = _detents.length - 1;
+    return n <= 0 ? 0 : _ordinalOf(index) / n;
+  }
+
+  @override
+  void didUpdateWidget(covariant _FlapLever oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // ponytail: max is the only aircraft-change signal; two aircraft with the
+    // same max share learned detents until the handle visits them.
+    if (widget.max != oldWidget.max) {
+      _unreachable.clear();
+      _singleStepFrom = null;
+    }
+    final synced = widget.synced;
+    if (synced == null || synced == oldWidget.synced) return;
+    _unreachable.remove(synced);
+    final from = _singleStepFrom;
+    _singleStepFrom = null;
+    if (from != null && (synced - from).abs() == 2) {
+      _unreachable.add((synced + from) ~/ 2);
+    }
+  }
 
   // Use this, not widget.synced, for drag math: a second drag inside the
   // grace window would otherwise diff against the stale value and double-send.
@@ -1175,11 +1211,14 @@ class _FlapLeverState extends State<_FlapLever> {
   }
 
   void _onDragEnd(DragEndDetails details) {
-    if (_max > 0) {
-      final target = (_dragFraction * _max).round().clamp(0, _max);
-      final steps = target - _currentDetent();
+    final detents = _detents;
+    final n = detents.length - 1;
+    if (n > 0) {
+      final target = (_dragFraction * n).round().clamp(0, n);
+      final steps = target - _ordinalOf(_currentDetent());
       if (steps != 0) widget.onStep(steps);
-      _pendingDetent = target;
+      _singleStepFrom = steps.abs() == 1 ? widget.synced : null;
+      _pendingDetent = detents[target];
       _lastLocalCommandAt = DateTime.now();
     }
     setState(() => _dragging = false);
@@ -1210,7 +1249,9 @@ class _FlapLeverState extends State<_FlapLever> {
             Positioned(
               bottom: 4,
               child: Text(
-                widget.max == null ? '--/--' : '$displayIndex/${widget.max}',
+                widget.max == null
+                    ? '--/--'
+                    : '${_ordinalOf(displayIndex)}/${_detents.length - 1}',
                 style: const TextStyle(fontSize: 10),
               ),
             ),
