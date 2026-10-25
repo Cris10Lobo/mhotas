@@ -75,6 +75,42 @@ void main() {
       expect(find.text('A/T'), findsNothing);
     });
 
+    testWidgets('speedbrake knob holds the command; the sim shows as a tick',
+        (tester) async {
+      final controller = StreamController<proto.Telemetry>();
+      addTearDown(controller.close);
+      await _pumpScreen(tester, overrides: [
+        telemetryProvider.overrideWith((ref) => controller.stream),
+      ]);
+      final lever = find.descendant(
+          of: find.byKey(const Key('speedbrake')),
+          matching: find.byWidgetPredicate(
+              (w) => w.runtimeType.toString() == '_SpeedbrakeLever'));
+      final knob = find.descendant(
+          of: lever,
+          matching: find.byWidgetPredicate(
+              (w) => w is Container && w.constraints?.maxWidth == 40));
+      final tick = find.byKey(const Key('speedbrakeSimTick'));
+
+      await tester.drag(lever, const Offset(0, -160));
+      await tester.pumpAndSettle();
+      final commandedY = tester.getCenter(knob).dy;
+
+      // The sim disagrees (e.g. a reversed binding): the knob stays put.
+      controller.add(_telemetry(spoilersHandle: 0));
+      await tester.pumpAndSettle();
+      await tester
+          .runAsync(() => Future.delayed(const Duration(milliseconds: 600)));
+      controller.add(_telemetry(spoilersHandle: 0));
+      await tester.pumpAndSettle();
+      expect(tester.getCenter(knob).dy, commandedY);
+      expect(tester.getCenter(tick).dy, greaterThan(commandedY));
+
+      controller.add(_telemetry(spoilersHandle: 1));
+      await tester.pumpAndSettle();
+      expect(tester.getCenter(tick).dy, closeTo(commandedY, 0.5));
+    });
+
     testWidgets('flap lever drops a detent one tap jumps over (FBW A32NX)',
         (tester) async {
       final controller = StreamController<proto.Telemetry>();
@@ -589,6 +625,7 @@ proto.Telemetry _telemetry({
   bool onGround = false,
   double groundSpeedKnots = 0,
   double elevatorTrim = 0,
+  double spoilersHandle = 0,
   bool autothrottleActive = false,
 }) =>
     proto.Telemetry(
@@ -602,6 +639,7 @@ proto.Telemetry _telemetry({
       onGround: onGround,
       groundSpeedKnots: groundSpeedKnots,
       elevatorTrim: elevatorTrim,
+      spoilersHandle: spoilersHandle,
       autothrottleActive: autothrottleActive,
     );
 

@@ -58,7 +58,7 @@ Use vJoy, a virtual joystick you bind in MSFS's controls menu like any other dev
 | Rudder | Drag left or right. Springs back to center when you let go. |
 | Trim ▲ ▼ | Elevator trim. Hold to keep trimming. The percentage is the sim's trim position. |
 | AP (AP DISC) | Disconnects the autopilot. Lit while the autopilot is on. |
-| Speedbrake (SPD) | Drag to deploy, from 0 (retracted) to 1 (full). ARM toggles auto spoilers. |
+| Speedbrake (SPD) | Drag to deploy, from 0 (retracted) to 1 (full). The lever stays where you leave it; the small tick beside it is where the sim's handle actually is. ARM toggles auto spoilers. |
 | Flaps (FLAP) | Drag to the notch you want. Follows the sim if you move flaps there. |
 | Gear | Tap to raise or lower. Shows UP, DOWN or in transit. |
 | Park brake (P) | Tap to toggle the parking brake. |

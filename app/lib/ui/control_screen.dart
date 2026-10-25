@@ -1493,9 +1493,10 @@ class _BigButton extends StatelessWidget {
 /// Speedbrake lever, 0 (retracted) .. 1 (full), sent as an axis: some
 /// aircraft (FBW A32NX) ignore the SPOILERS_INC/DEC step events.
 ///
-/// [synced] is SPOILERS HANDLE POSITION (0..1). The lever mirrors it except
-/// while dragging and until the sim's handle stops moving after a drag, so
-/// a slewing handle doesn't drag the knob back mid-travel.
+/// The knob is the command and never moves on its own, like a hardware
+/// lever. [synced] (SPOILERS HANDLE POSITION, 0..1) is drawn as a tick beside
+/// it instead: following it made a reversed binding or a slewing handle drag
+/// the knob around, while a tick still shows the sim disagreeing.
 class _SpeedbrakeLever extends StatefulWidget {
   const _SpeedbrakeLever({required this.onChanged, this.synced});
 
@@ -1514,51 +1515,25 @@ class _SpeedbrakeLeverState extends State<_SpeedbrakeLever> {
   static const _retractSnapBand = 0.03;
 
   double _value = 0;
-  bool _dragging = false;
-  DateTime _lastLocalCommandAt = DateTime.fromMillisecondsSinceEpoch(0);
-  double? _lastSynced;
-  DateTime _syncedMovedAt = DateTime.fromMillisecondsSinceEpoch(0);
-  static const _simSettleTime = Duration(milliseconds: 500);
-
-  @override
-  void didUpdateWidget(covariant _SpeedbrakeLever oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    final synced = widget.synced;
-    if (synced == null) return;
-    final now = DateTime.now();
-    if (_lastSynced == null || (synced - _lastSynced!).abs() > 0.005) {
-      _syncedMovedAt = now;
-    }
-    _lastSynced = synced;
-    final quietSince = _syncedMovedAt.isAfter(_lastLocalCommandAt)
-        ? _syncedMovedAt
-        : _lastLocalCommandAt;
-    if (_dragging || now.difference(quietSince) < _simSettleTime) return;
-    _value = synced;
-  }
 
   void _command(double value) {
     setState(() => _value = value);
-    _lastLocalCommandAt = DateTime.now();
     widget.onChanged(value);
   }
-
-  void _onDragStart(DragStartDetails details) => _dragging = true;
 
   void _onDragUpdate(DragUpdateDetails details) {
     _command((_value - details.delta.dy / _height).clamp(0.0, 1.0));
   }
 
   void _onDragEnd(DragEndDetails details) {
-    _dragging = false;
     if (_value < _retractSnapBand) _command(0);
   }
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final synced = widget.synced;
     return GestureDetector(
-      onVerticalDragStart: _onDragStart,
       onVerticalDragUpdate: _onDragUpdate,
       onVerticalDragEnd: _onDragEnd,
       child: Container(
@@ -1586,6 +1561,26 @@ class _SpeedbrakeLeverState extends State<_SpeedbrakeLever> {
                 ],
               ),
             ),
+            if (synced != null)
+              Align(
+                alignment: Alignment(-1, 1 - synced.clamp(0.0, 1.0) * 2),
+                // Knob-height box so the tick's travel matches the knob's.
+                child: SizedBox(
+                  key: const Key('speedbrakeSimTick'),
+                  width: 8,
+                  height: _knobHeight,
+                  child: Center(
+                    child: Container(
+                      width: 6,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: scheme.tertiary,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
             Align(
               alignment: Alignment(0, 1 - _value * 2),
               child: Container(
