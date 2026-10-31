@@ -51,7 +51,7 @@ func telemetryStarter(ctx context.Context, client *simlink.Client, syncer contro
 			return
 		}
 		go func() {
-			if err := src.Run(ctx, sink); err != nil && !errors.Is(err, context.Canceled) {
+			if err := src.Run(ctx, telemetry.LogChanges(sink, log)); err != nil && !errors.Is(err, context.Canceled) {
 				log.Error("telemetry source stopped", "err", err)
 			}
 		}()

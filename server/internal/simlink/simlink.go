@@ -445,3 +445,41 @@ func dllOption(log *slog.Logger) manager.Option {
 	}
 	return manager.WithAutoDetect()
 }
+
+// probeIDs hands each ReadOnce its own definition/request ID, clear of the
+// fixed IDs above.
+var probeIDs atomic.Uint32
+
+// ReadOnce reads arbitrary simvars or L:vars (e.g. "L:A32NX_FLAPS_HANDLE_INDEX")
+// once, as float64 in the given units. For dev probing, not the hot path.
+func (c *Client) ReadOnce(ctx context.Context, names, units []string) ([]float64, error) {
+	client, err := c.connected()
+	if err != nil {
+		return nil, err
+	}
+	id := 500_000 + probeIDs.Add(1)
+	sub := c.mgr.SubscribeWithFilter(fmt.Sprintf("probe-%d", id), 4, func(msg engine.Message) bool {
+		return types.SIMCONNECT_RECV_ID(msg.DwID) == types.SIMCONNECT_RECV_ID_SIMOBJECT_DATA &&
+			uint32(msg.AsSimObjectData().DwRequestID) == id
+	})
+	defer sub.Unsubscribe()
+
+	for i, name := range names {
+		client.AddToDataDefinition(id, name, units[i], types.SIMCONNECT_DATATYPE_FLOAT64, 0, uint32(i))
+	}
+	client.RequestDataOnSimObject(id, id, types.SIMCONNECT_OBJECT_ID_USER, types.SIMCONNECT_PERIOD_ONCE, 0, 0, 0, 0)
+
+	select {
+	case <-ctx.Done():
+		return nil, fmt.Errorf("simlink: no reply (unknown var or unit?): %w", ctx.Err())
+	case msg, ok := <-sub.Messages():
+		if !ok {
+			return nil, errNotConnected
+		}
+		if msg.Err != nil {
+			return nil, msg.Err
+		}
+		data := msg.AsSimObjectData()
+		return append([]float64(nil), unsafe.Slice((*float64)(unsafe.Pointer(&data.DwData)), len(names))...), nil
+	}
+}
