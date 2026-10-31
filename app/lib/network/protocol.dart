@@ -78,6 +78,9 @@ class Axis {
   final double rudder; // -1..1
   final double speedbrake; // 0..1
 
+  // throttle and speedbrake are NaN until first moved, so connecting doesn't
+  // override the sim's lever positions.
+
   const Axis({
     required this.pitch,
     required this.roll,
@@ -307,6 +310,7 @@ class ConfigAxis {
   static const int roll = 1;
   static const int throttle = 2;
   static const int rudder = 3;
+  static const int speedbrake = 4; // only invert applies
 }
 
 const int _axisCalibrationSize = 18;
@@ -351,7 +355,7 @@ AxisCalibration _decodeAxisCalibration(ByteData bd, int offset) {
   );
 }
 
-const int configPacketSize = headerSize + 4 * _axisCalibrationSize;
+const int configPacketSize = headerSize + 5 * _axisCalibrationSize;
 
 /// Full calibration snapshot, pushed after HELLO_ACK and after every CONFIG_SET.
 class Config {
@@ -359,12 +363,14 @@ class Config {
   final AxisCalibration roll;
   final AxisCalibration throttle;
   final AxisCalibration rudder;
+  final AxisCalibration speedbrake;
 
   const Config({
     required this.pitch,
     required this.roll,
     required this.throttle,
     required this.rudder,
+    required this.speedbrake,
   });
 }
 
@@ -378,6 +384,7 @@ Config decodeConfig(Uint8List b) {
     roll: _decodeAxisCalibration(bd, 4 + _axisCalibrationSize),
     throttle: _decodeAxisCalibration(bd, 4 + 2 * _axisCalibrationSize),
     rudder: _decodeAxisCalibration(bd, 4 + 3 * _axisCalibrationSize),
+    speedbrake: _decodeAxisCalibration(bd, 4 + 4 * _axisCalibrationSize),
   );
 }
 

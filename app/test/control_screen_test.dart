@@ -400,6 +400,59 @@ void main() {
   });
 
   group('buttons/axes -> wire protocol', () {
+    testWidgets('throttle and speedbrake are NaN until touched',
+        (tester) async {
+      await tester.runAsync(() async {
+        final server = await _FakeServer.start();
+        addTearDown(server.close);
+        final container = ProviderContainer();
+        addTearDown(container.dispose);
+
+        await _pumpScreen(tester, container: container);
+        await _connect(tester, container, server);
+
+        final first = await server.nextAxis();
+        expect(first.throttle.isNaN, isTrue);
+        expect(first.speedbrake.isNaN, isTrue);
+      });
+    });
+
+    testWidgets('a multi-detent flap move waits for the sim between taps',
+        (tester) async {
+      await tester.runAsync(() async {
+        final server = await _FakeServer.start();
+        addTearDown(server.close);
+        final telemetry = StreamController<proto.Telemetry>(sync: true);
+        addTearDown(telemetry.close);
+        final container = ProviderContainer(overrides: [
+          telemetryProvider.overrideWith((ref) => telemetry.stream),
+        ]);
+        addTearDown(container.dispose);
+
+        await _pumpScreen(tester, container: container);
+        await _connect(tester, container, server);
+        telemetry.add(_telemetry(flapHandleIndex: 0, flapHandleIndexMax: 4));
+        await tester.pump();
+
+        await tester.drag(
+            find.byKey(const Key('flapLever')), const Offset(0, 80));
+        await tester.pump();
+        expect((await server.nextButton()).buttonId, ButtonIds.flapIncr);
+        expect((await server.nextButton()).pressed, isFalse);
+
+        // No second tap until the sim reports the first detent.
+        await Future.delayed(const Duration(milliseconds: 400));
+        expect(server.hasPendingButton, isFalse);
+        telemetry.add(_telemetry(flapHandleIndex: 1, flapHandleIndexMax: 4));
+        await tester.pump();
+        expect((await server.nextButton()).buttonId, ButtonIds.flapIncr);
+        // Let the second tap's wait end before teardown disposes providers.
+        telemetry.add(_telemetry(flapHandleIndex: 2, flapHandleIndexMax: 4));
+        await tester.pump();
+        await Future.delayed(const Duration(milliseconds: 100));
+      });
+    });
+
     testWidgets('momentary and toggle buttons send the right BUTTON packets',
         (tester) async {
       await tester.runAsync(() async {
@@ -742,6 +795,12 @@ class _FakeServer {
   }
 
   int get port => _socket.port;
+
+  /// Whether a new BUTTON event (not a resend of the last one) is queued.
+  bool get hasPendingButton => _queue._pending
+      .where((d) => d[0] == proto.PacketType.button)
+      .map(proto.decodeButton)
+      .any((b) => (b.buttonId, b.pressed) != _lastButton);
 
   Future<proto.Button> nextButton() async {
     while (true) {

@@ -51,6 +51,9 @@ type Config struct {
 	Roll              AxisConfig `json:"roll"`
 	Throttle          AxisConfig `json:"throttle"`
 	Rudder            AxisConfig `json:"rudder"`
+	// Speedbrake uses only Curve.Invert (retracted and full swap, like MSFS's
+	// "reverse axis") and always holds on failsafe.
+	Speedbrake AxisConfig `json:"speedbrake"`
 
 	// Controls overrides per-control mappings by name; absent names use the
 	// backend's defaults.
@@ -67,6 +70,7 @@ func Default() Config {
 		Roll:              AxisConfig{Failsafe: FailsafeNeutral},
 		Throttle:          AxisConfig{Failsafe: FailsafeHold},
 		Rudder:            AxisConfig{Failsafe: FailsafeNeutral},
+		Speedbrake:        AxisConfig{Failsafe: FailsafeHold},
 	}
 }
 
@@ -111,7 +115,7 @@ func Save(path string, cfg Config) error {
 // validate rejects unknown failsafe values: transport would treat a typo
 // like "netural" as hold, leaving stale pitch/roll/rudder applied on timeout.
 func (c Config) validate() error {
-	axes := map[string]AxisConfig{"pitch": c.Pitch, "roll": c.Roll, "throttle": c.Throttle, "rudder": c.Rudder}
+	axes := map[string]AxisConfig{"pitch": c.Pitch, "roll": c.Roll, "throttle": c.Throttle, "rudder": c.Rudder, "speedbrake": c.Speedbrake}
 	for name, ac := range axes {
 		if ac.Failsafe != FailsafeNeutral && ac.Failsafe != FailsafeHold {
 			return fmt.Errorf("%s.failsafe: %q is neither %q nor %q", name, ac.Failsafe, FailsafeNeutral, FailsafeHold)

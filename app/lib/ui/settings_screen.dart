@@ -46,6 +46,22 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             onChanged: (v) =>
                 ref.read(nudgeThrottleProvider.notifier).setEnabled(v),
           ),
+          if (nudgeThrottle)
+            const Card(
+              margin: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: Padding(
+                padding: EdgeInsets.all(16),
+                child: Text(
+                  'vJoy input needs these bindings in MSFS (Controls > vJoy '
+                  'Device):\n'
+                  '  button 13: INCREASE THROTTLE\n'
+                  '  button 14: DECREASE THROTTLE\n'
+                  '  button 15: THROTTLE REVERSE THRUST HOLD\n'
+                  "SimConnect input needs none. If +/- don't move the sim's "
+                  'throttle, the flying screen says so.',
+                ),
+              ),
+            ),
           const SizedBox(height: 24),
           const Text(
             'Calibration',
@@ -83,6 +99,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               label: 'Rudder',
               axis: proto.ConfigAxis.rudder,
               calibration: calibration.rudder,
+            ),
+            _AxisCalibrationCard(
+              label: 'Speedbrake',
+              axis: proto.ConfigAxis.speedbrake,
+              calibration: calibration.speedbrake,
             ),
           ],
         ],
@@ -143,6 +164,23 @@ class _AxisCalibrationCardState extends ConsumerState<_AxisCalibrationCard> {
 
   @override
   Widget build(BuildContext context) {
+    if (widget.axis == proto.ConfigAxis.speedbrake) {
+      // A lever position: a curve or smoothing would only make it lag.
+      return Card(
+        margin: const EdgeInsets.symmetric(vertical: 8),
+        child: SwitchListTile(
+          title: const Text('Reverse speedbrake'),
+          subtitle: const Text(
+              'Turn on if the sim deploys when the lever is retracted. Same '
+              'as MSFS\'s "Reverse axis" on the binding.'),
+          value: _invert,
+          onChanged: (v) {
+            setState(() => _invert = v);
+            _commit();
+          },
+        ),
+      );
+    }
     return Card(
       margin: const EdgeInsets.symmetric(vertical: 8),
       child: Padding(

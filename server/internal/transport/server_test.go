@@ -175,6 +175,49 @@ func TestAxisAppliesCalibrationAndReachesBackend(t *testing.T) {
 	t.Fatal("timed out waiting for backend to receive AXIS values")
 }
 
+func TestUntouchedThrottleAndSpeedbrakeAreNotSent(t *testing.T) {
+	cfg := config.Default()
+	cfg.ListenPort = 0
+	cfg.Speedbrake.Curve.Invert = true
+	_, backend, client := newTestServer(t, cfg)
+	sendHello(t, client)
+
+	nan := float32(math.NaN())
+	pkt := protocol.EncodeAxis(2, protocol.Axis{Pitch: 0.5, Throttle: nan, Speedbrake: nan})
+	if _, err := client.Write(pkt); err != nil {
+		t.Fatalf("write AXIS: %v", err)
+	}
+	waitAxis(t, backend, control.AxisPitch)
+	if _, ok := backend.lastAxis(control.AxisThrottle); ok {
+		t.Fatal("NaN throttle reached the backend")
+	}
+	if _, ok := backend.lastAxis(control.AxisSpeedbrake); ok {
+		t.Fatal("NaN speedbrake reached the backend")
+	}
+
+	// First real value is sent, with the speedbrake inverted.
+	pkt = protocol.EncodeAxis(3, protocol.Axis{Throttle: nan, Speedbrake: 0.25})
+	if _, err := client.Write(pkt); err != nil {
+		t.Fatalf("write AXIS: %v", err)
+	}
+	if got := waitAxis(t, backend, control.AxisSpeedbrake); got != 0.75 {
+		t.Fatalf("speedbrake = %v, want 0.75 (inverted)", got)
+	}
+}
+
+func waitAxis(t *testing.T, backend *fakeBackend, id control.AxisID) float64 {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if v, ok := backend.lastAxis(id); ok {
+			return v
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %v", id)
+	return 0
+}
+
 func TestButtonDeduplicatesByEventID(t *testing.T) {
 	cfg := config.Default()
 	cfg.ListenPort = 0

@@ -65,6 +65,9 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
     });
     _sendTimer =
         Timer.periodic(const Duration(milliseconds: 33), (_) => _sendAxis());
+    // The provider outlives this screen; a lever value from an earlier
+    // session would otherwise override the sim on the first packet.
+    Future.microtask(() => ref.read(sliderAxisProvider.notifier).reset());
   }
 
   Future<void> _openSettings() async {
@@ -105,11 +108,48 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
   }
 
   // SimConnect only has step events (no set-to-detent), so N detents are N
-  // sequential press/release pairs.
-  Future<void> _stepButton(int incrId, int decrId, int delta) async {
-    for (var i = 0; i < delta.abs(); i++) {
-      await _tapButton(delta > 0 ? incrId : decrId);
+  // taps. Each waits for the sim to report the new detent: the FBW A32NX
+  // drops a tap sent while its handle is still moving. 1s caps the wait for
+  // an aircraft whose index lags or never changes.
+  Future<void> _stepFlaps(int delta) async {
+    for (var i = 0; i < delta.abs() && mounted; i++) {
+      int? index() => ref.read(telemetryProvider).valueOrNull?.flapHandleIndex;
+      final before = index();
+      await _tapButton(delta > 0 ? ButtonIds.flapIncr : ButtonIds.flapDecr);
+      final deadline = DateTime.now().add(const Duration(seconds: 1));
+      while (
+          mounted && index() == before && DateTime.now().isBefore(deadline)) {
+        await Future.delayed(const Duration(milliseconds: 20));
+      }
     }
+  }
+
+  bool _nudgeWarned = false;
+
+  // Nudge sends no axis, so in vJoy mode it only works if buttons 13-15 are
+  // bound in MSFS; say so once rather than leave +/- silently dead.
+  Future<void> _nudge(int buttonId) async {
+    final before = ref.read(telemetryProvider).valueOrNull;
+    await _tapButton(buttonId);
+    if (_nudgeWarned || before == null || before.autothrottleActive) return;
+    final up = buttonId == ButtonIds.throttleIncr;
+    if (up ? before.throttlePercent >= 0.99 : before.throttlePercent <= 0.01) {
+      return;
+    }
+    await Future.delayed(const Duration(milliseconds: 1500));
+    final after = ref.read(telemetryProvider).valueOrNull;
+    if (!mounted ||
+        after == null ||
+        after.throttlePercent != before.throttlePercent) {
+      return;
+    }
+    _nudgeWarned = true;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text("The sim's throttle didn't move. In vJoy mode, bind vJoy "
+          'button ${up ? 13 : 14} to ${up ? 'INCREASE' : 'DECREASE'} THROTTLE '
+          'in MSFS (see Settings > Nudge throttle).'),
+      duration: const Duration(seconds: 8),
+    ));
   }
 
   // HapticFeedback can't loop; this is why the vibration package is needed.
@@ -167,6 +207,13 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
     final nudgeThrottle = ref.watch(nudgeThrottleProvider);
     final layoutEditMode = ref.watch(layoutEditModeProvider);
     final gyroPaused = ref.watch(gyroPausedProvider);
+
+    ref.listen(connectionStatusProvider, (previous, next) {
+      if (next.valueOrNull == ConnectionStatus.connected &&
+          previous?.valueOrNull != ConnectionStatus.connected) {
+        ref.read(sliderAxisProvider.notifier).reset();
+      }
+    });
 
     // Recenter on unpause: the grip the phone settled into while set down
     // is the new neutral, so resuming doesn't jolt the aircraft.
@@ -312,8 +359,7 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
                         child: _Movable(
                           id: 'flapLever',
                           child: _FlapLever(
-                            onStep: (n) => _stepButton(
-                                ButtonIds.flapIncr, ButtonIds.flapDecr, n),
+                            onStep: _stepFlaps,
                             synced: telemetry?.flapHandleIndex,
                             max: telemetry?.flapHandleIndexMax,
                           ),
@@ -396,10 +442,8 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
                                   throttlePercent: telemetry?.throttlePercent,
                                   autothrottle:
                                       telemetry?.autothrottleActive ?? false,
-                                  onIncr: () =>
-                                      _tapButton(ButtonIds.throttleIncr),
-                                  onDecr: () =>
-                                      _tapButton(ButtonIds.throttleDecr),
+                                  onIncr: () => _nudge(ButtonIds.throttleIncr),
+                                  onDecr: () => _nudge(ButtonIds.throttleDecr),
                                   onReverseArmChanged: (pressed) => _sendButton(
                                       ButtonIds.throttleReverseArm, pressed),
                                 )

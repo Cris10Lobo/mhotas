@@ -159,7 +159,8 @@ when it starts.
 | 15 | reverse thrust | Reverse thrust (hold) |
 
 If pitch or roll goes the wrong way, tick "reverse axis" on that binding in MSFS. For the throttle,
-use Settings, Throttle, Invert in the app instead.
+use Settings, Throttle, Invert in the app instead. If the speedbrake deploys when the lever is retracted,
+turn on Settings, Speedbrake, Reverse speedbrake. Buttons 13 to 15 are only needed for nudge throttle.
 
 You only have to do this once. MSFS saves the bindings in a profile.
 

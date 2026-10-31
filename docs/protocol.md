@@ -40,14 +40,19 @@ Every packet starts with a 4-byte header:
 |--------|------|------------|----------------|
 | 4      | 4    | `pitch`    | float32, -1..1 |
 | 8      | 4    | `roll`     | float32, -1..1 |
-| 12     | 4    | `throttle` | float32, -1..1 (negative = reverse thrust) |
+| 12     | 4    | `throttle` | float32, -1..1 (negative = reverse thrust), or NaN |
 | 16     | 4    | `rudder`   | float32, -1..1 |
-| 20     | 4    | `speedbrake` | float32, 0..1 (0 = retracted) |
+| 20     | 4    | `speedbrake` | float32, 0..1 (0 = retracted), or NaN |
+
+`throttle` and `speedbrake` are NaN until the pilot first moves them after connecting, and the server
+skips a NaN axis. Without this, the phone's starting value overrode the sim's lever on every
+(re)connect (seen live: a sim throttle at reverse idle jumped to forward idle).
 
 No dead-zone or curve is applied on the phone. It sends raw normalized tilt/slider position. The
 server applies dead-zone, expo curve, invert, and range conversion for the active `ControlOutput`
 backend (see `server/internal/calibration` and `server/internal/control`). `speedbrake` is the
-exception: no calibration, only clamped to 0..1. It is an axis rather than INC/DEC buttons (as it was
+exception: no curve, only clamped to 0..1 and optionally inverted (`1 - v`, CONFIG's `speedbrake`
+block). It is an axis rather than INC/DEC buttons (as it was
 through v8) because some aircraft (FBW A32NX) only accept an absolute speedbrake position. The phone *does* apply the
 recenter/zero offset before normalizing, since that's correcting for physical grip, not sim response.
 
@@ -99,7 +104,7 @@ not required for `AXIS`/`BUTTON` processing to function.
 | 12     | 1    | `paused`               | uint8: 0/1, the sim's *actual* current pause state, from SimConnect's own Pause system event, not a guess based on the phone's last PAUSE tap |
 | 13     | 1    | `flags`                | bitmask: bit0 = `stallWarning` (SimConnect `STALL WARNING`), bit1 = `onGround` (`SIM ON GROUND`), bit2 = `spoilersArmed` (`SPOILERS ARMED`), bit3 = `autopilotMaster` (`AUTOPILOT MASTER`), bit4 = `autothrottleActive` (`AUTOPILOT MANAGED THROTTLE ACTIVE`, or `AUTOPILOT THROTTLE ARM` with `AUTOPILOT AIRSPEED HOLD`/`MACH HOLD`, since armed alone doesn't count), bits 5-7 unused. Was a plain "reserved, must be 0" byte through v6. |
 | 14     | 4    | `groundSpeedKnots`     | float32, `GROUND VELOCITY` in knots. Drives the taxi/ground-roll rumble haptic's pulse rate; meaningless while `onGround` is false |
-| 18     | 4    | `spoilersHandle`       | float32, 0..1, `SPOILERS HANDLE POSITION`, mirrored by the speedbrake lever mirrors it |
+| 18     | 4    | `spoilersHandle`       | float32, 0..1, `SPOILERS HANDLE POSITION`, shown as the tick beside the speedbrake lever |
 | 22     | 4    | `elevatorTrim`         | float32, -1..1, `ELEVATOR TRIM PCT`, shown on the trim rocker |
 
 These fields exist so the app can mirror the sim's real state rather than silently fighting a manual
@@ -113,14 +118,14 @@ The server sends a packet whenever any field changed, at most every 50ms (SimCon
 changed sim frame), and re-sends unchanged state once a second so a phone that just (re)connected gets
 the full picture without waiting for something in the sim to change.
 
-### `CONFIG` (0x07), 76 bytes total
+### `CONFIG` (0x07), 94 bytes total
 
 Full snapshot of the server's current dead-zone/expo/invert/smoothing/signed-throttle for every axis,
 same "whole struct, not a diff" approach as `TELEMETRY`. Sent unprompted right after `HELLO_ACK`, again
 after every applied `CONFIG_SET`, and in reply to a `CONFIG_GET`. Failsafe policy isn't part of this; it
 stays a server-config-file-only setting, not phone-editable.
 
-Four fixed-order 18-byte axis-calibration blocks, pitch/roll/throttle/rudder:
+Five fixed-order 18-byte axis-calibration blocks, pitch/roll/throttle/rudder/speedbrake:
 
 | Offset (within block) | Size | Field                | Range          |
 |------------------------|------|----------------------|----------------|
@@ -146,12 +151,16 @@ pitch/roll/rudder.
 | 22     | 18   | `roll`     |
 | 40     | 18   | `throttle` |
 | 58     | 18   | `rudder`   |
+| 76     | 18   | `speedbrake` |
+
+Only `invert` means anything on the `speedbrake` block: it swaps retracted and full, the same as ticking
+"reverse axis" on the MSFS binding, so a reversed binding can be fixed from the phone.
 
 ### `CONFIG_SET` (0x08), 23 bytes total
 
 | Offset | Size | Field         | Notes                                             |
 |--------|------|---------------|----------------------------------------------------|
-| 4      | 1    | `axis`        | 0=pitch, 1=roll, 2=throttle, 3=rudder               |
+| 4      | 1    | `axis`        | 0=pitch, 1=roll, 2=throttle, 3=rudder, 4=speedbrake |
 | 5      | 18   | `calibration` | same axis-calibration block layout as `CONFIG`      |
 
 Changes one axis's dead-zone/expo/invert/smoothing/signed-throttle. The server clamps

@@ -133,6 +133,9 @@ func Connect(ctx context.Context, log *slog.Logger) *Client {
 				c.inputEventsMu.Lock()
 				c.inputEvents = map[string]uint64{}
 				c.inputEventsMu.Unlock()
+				probeDefsMu.Lock()
+				clear(probeDefs)
+				probeDefsMu.Unlock()
 				if err := c.mgr.EnumerateInputEvents(reqInputEvents); err != nil {
 					// Expected on MSFS2020; Input Events are MSFS2024-only.
 					c.log.Info("input event enumeration unavailable", "err", err)
@@ -446,9 +449,13 @@ func dllOption(log *slog.Logger) manager.Option {
 	return manager.WithAutoDetect()
 }
 
-// probeIDs hands each ReadOnce its own definition/request ID, clear of the
-// fixed IDs above.
-var probeIDs atomic.Uint32
+// probeDefs maps a ReadOnce var list to its definition/request ID, clear of
+// the fixed IDs above. Reused because SimConnect caps definitions per
+// connection (~1000 reads in, every request failed).
+var (
+	probeDefsMu sync.Mutex
+	probeDefs   = map[string]uint32{}
+)
 
 // ReadOnce reads arbitrary simvars or L:vars (e.g. "L:A32NX_FLAPS_HANDLE_INDEX")
 // once, as float64 in the given units. For dev probing, not the hot path.
@@ -457,16 +464,23 @@ func (c *Client) ReadOnce(ctx context.Context, names, units []string) ([]float64
 	if err != nil {
 		return nil, err
 	}
-	id := 500_000 + probeIDs.Add(1)
+	key := fmt.Sprint(names, units)
+	probeDefsMu.Lock()
+	id, defined := probeDefs[key]
+	if !defined {
+		id = 500_000 + uint32(len(probeDefs))
+		probeDefs[key] = id
+		for i, name := range names {
+			client.AddToDataDefinition(id, name, units[i], types.SIMCONNECT_DATATYPE_FLOAT64, 0, uint32(i))
+		}
+	}
+	probeDefsMu.Unlock()
 	sub := c.mgr.SubscribeWithFilter(fmt.Sprintf("probe-%d", id), 4, func(msg engine.Message) bool {
 		return types.SIMCONNECT_RECV_ID(msg.DwID) == types.SIMCONNECT_RECV_ID_SIMOBJECT_DATA &&
 			uint32(msg.AsSimObjectData().DwRequestID) == id
 	})
 	defer sub.Unsubscribe()
 
-	for i, name := range names {
-		client.AddToDataDefinition(id, name, units[i], types.SIMCONNECT_DATATYPE_FLOAT64, 0, uint32(i))
-	}
 	client.RequestDataOnSimObject(id, id, types.SIMCONNECT_OBJECT_ID_USER, types.SIMCONNECT_PERIOD_ONCE, 0, 0, 0, 0)
 
 	select {

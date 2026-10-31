@@ -109,7 +109,9 @@ func decodeName(src []byte) string {
 
 const AxisPacketSize = HeaderSize + 20
 
-// Axis is sent raw: dead zone and curve are applied server-side.
+// Axis is sent raw: dead zone and curve are applied server-side. Throttle
+// and Speedbrake are NaN until the pilot first moves them, so connecting
+// doesn't override the sim's lever positions.
 type Axis struct {
 	Pitch      float32 // -1..1
 	Roll       float32 // -1..1
@@ -342,10 +344,11 @@ func DecodeTelemetry(b []byte) (Telemetry, error) {
 type ConfigAxis uint8
 
 const (
-	ConfigAxisPitch    ConfigAxis = 0
-	ConfigAxisRoll     ConfigAxis = 1
-	ConfigAxisThrottle ConfigAxis = 2
-	ConfigAxisRudder   ConfigAxis = 3
+	ConfigAxisPitch      ConfigAxis = 0
+	ConfigAxisRoll       ConfigAxis = 1
+	ConfigAxisThrottle   ConfigAxis = 2
+	ConfigAxisRudder     ConfigAxis = 3
+	ConfigAxisSpeedbrake ConfigAxis = 4 // only Invert applies
 )
 
 // AxisCalibration is carried on every axis; the signed throttle fields only
@@ -381,11 +384,11 @@ func decodeAxisCalibration(b []byte) AxisCalibration {
 	}
 }
 
-const ConfigPacketSize = HeaderSize + 4*axisCalibrationSize
+const ConfigPacketSize = HeaderSize + 5*axisCalibrationSize
 
 // Config is a full snapshot of every axis, not a diff.
 type Config struct {
-	Pitch, Roll, Throttle, Rudder AxisCalibration
+	Pitch, Roll, Throttle, Rudder, Speedbrake AxisCalibration
 }
 
 func EncodeConfig(seq uint16, c Config) []byte {
@@ -395,6 +398,7 @@ func EncodeConfig(seq uint16, c Config) []byte {
 	encodeAxisCalibration(buf[4+1*axisCalibrationSize:], c.Roll)
 	encodeAxisCalibration(buf[4+2*axisCalibrationSize:], c.Throttle)
 	encodeAxisCalibration(buf[4+3*axisCalibrationSize:], c.Rudder)
+	encodeAxisCalibration(buf[4+4*axisCalibrationSize:], c.Speedbrake)
 	return buf
 }
 
@@ -403,10 +407,11 @@ func DecodeConfig(b []byte) (Config, error) {
 		return Config{}, fmt.Errorf("protocol: CONFIG packet too short: %d bytes", len(b))
 	}
 	return Config{
-		Pitch:    decodeAxisCalibration(b[4+0*axisCalibrationSize:]),
-		Roll:     decodeAxisCalibration(b[4+1*axisCalibrationSize:]),
-		Throttle: decodeAxisCalibration(b[4+2*axisCalibrationSize:]),
-		Rudder:   decodeAxisCalibration(b[4+3*axisCalibrationSize:]),
+		Pitch:      decodeAxisCalibration(b[4+0*axisCalibrationSize:]),
+		Roll:       decodeAxisCalibration(b[4+1*axisCalibrationSize:]),
+		Throttle:   decodeAxisCalibration(b[4+2*axisCalibrationSize:]),
+		Rudder:     decodeAxisCalibration(b[4+3*axisCalibrationSize:]),
+		Speedbrake: decodeAxisCalibration(b[4+4*axisCalibrationSize:]),
 	}, nil
 }
 
