@@ -70,10 +70,11 @@ func sendAxisSweep(conn *net.UDPConn, rate float64) {
 	for range ticker.C {
 		t := time.Since(start).Seconds()
 		axis := protocol.Axis{
-			Pitch:    float32(math.Sin(t * 0.5)),
-			Roll:     float32(math.Sin(t*0.3) * 0.7),
-			Throttle: float32((math.Sin(t*0.2) + 1) / 2),
-			Rudder:   float32(math.Sin(t*0.4) * 0.5),
+			Pitch:      float32(math.Sin(t * 0.5)),
+			Roll:       float32(math.Sin(t*0.3) * 0.7),
+			Throttle:   float32((math.Sin(t*0.2) + 1) / 2),
+			Rudder:     float32(math.Sin(t*0.4) * 0.5),
+			Speedbrake: float32((math.Sin(t*0.6) + 1) / 2),
 		}
 		seq++
 		if _, err := conn.Write(protocol.EncodeAxis(seq, axis)); err != nil {
