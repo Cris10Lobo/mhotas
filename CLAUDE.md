@@ -49,14 +49,14 @@ GOOS=windows go build ./...
 GOOS=windows go vet ./...
 ```
 
-To check the sim's side of a change against a live MSFS: the server logs a `sim` line whenever the
-sim's control state (flaps, gear, spoilers, throttle, trim, ...) changes, and `make probe VARS='...'`
-(`server/cmd/simprobe`) reads any simvar or L:var on demand, e.g. FBW's `L:A32NX_FLAPS_HANDLE_INDEX`.
-
 A plain `go build ./...` / `go vet ./...` / `go test ./...` on Linux/macOS silently skips those packages
 rather than failing. Always also run the `GOOS=windows` variants when touching anything under those
 paths. Real behavior against a live sim can only be verified on an actual Windows PC with MSFS2024
 running; that can't be done from this environment.
+
+To check the sim's side of a change against a live MSFS: the server logs a `sim` line whenever the
+sim's control state (flaps, gear, spoilers, throttle, trim, ...) changes, and `make probe VARS='...'`
+(`server/cmd/simprobe`) reads any simvar or L:var on demand, e.g. FBW's `L:A32NX_FLAPS_HANDLE_INDEX`.
 
 ### udp-fake-phone (`tools/udp-fake-phone/`, separate Go module)
 
