@@ -66,10 +66,11 @@ func run() error {
 		for i, name := range names {
 			parts[i] = fmt.Sprintf("%s=%g", name, values[i])
 		}
-		fmt.Println(strings.Join(parts, " "))
 		if *watch == 0 {
+			fmt.Println(strings.Join(parts, " "))
 			return nil
 		}
+		fmt.Println(time.Now().Format("15:04:05.000"), strings.Join(parts, " "))
 		time.Sleep(*watch)
 	}
 }
