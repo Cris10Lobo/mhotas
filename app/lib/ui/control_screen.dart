@@ -107,20 +107,30 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
     _sendButton(buttonId, false);
   }
 
-  // SimConnect only has step events (no set-to-detent), so N detents are N
-  // taps. Each waits for the sim to report the new detent: the FBW A32NX
-  // drops a tap sent while its handle is still moving. 1s caps the wait for
-  // an aircraft whose index lags or never changes.
+  // SimConnect only has step events (no set-to-detent), so a move is taps
+  // toward the target until the sim reports it. The FBW A32NX drops taps
+  // that come while its handle is still moving, even after its index has
+  // updated, so taps are spaced and a tap the sim didn't act on within 1s is
+  // re-sent. The tap cap stops an aircraft whose index lags or never changes
+  // from being tapped forever.
   Future<void> _stepFlaps(int delta) async {
-    for (var i = 0; i < delta.abs() && mounted; i++) {
-      int? index() => ref.read(telemetryProvider).valueOrNull?.flapHandleIndex;
+    int? index() => ref.read(telemetryProvider).valueOrNull?.flapHandleIndex;
+    final start = index();
+    if (start == null) return;
+    final target = start + delta;
+    for (var taps = 0; taps < delta.abs() + 2 && mounted; taps++) {
       final before = index();
+      // Reached or passed: an aircraft may skip an index (0 -> 2).
+      if (before == null || (delta > 0 ? before >= target : before <= target)) {
+        return;
+      }
       await _tapButton(delta > 0 ? ButtonIds.flapIncr : ButtonIds.flapDecr);
       final deadline = DateTime.now().add(const Duration(seconds: 1));
       while (
           mounted && index() == before && DateTime.now().isBefore(deadline)) {
         await Future.delayed(const Duration(milliseconds: 20));
       }
+      await Future.delayed(const Duration(milliseconds: 250));
     }
   }
 
@@ -663,7 +673,8 @@ class _ControlLabel extends StatelessWidget {
             ),
           ),
         ),
-        child,
+        // Lets a tall control (the throttle) shrink instead of overflowing.
+        Flexible(child: child),
       ],
     );
   }
@@ -959,8 +970,10 @@ class _ThrottleLever extends StatefulWidget {
 
 class _ThrottleLeverState extends State<_ThrottleLever>
     with SingleTickerProviderStateMixin {
-  // 320 overflows the row by 8px.
-  static const _height = 300.0;
+  // 320 overflows the row by 8px. Shrinks to fit: on a Pixel 4a in landscape
+  // with the system bars swiped in, only ~285px are left.
+  static const _maxHeight = 300.0;
+  double _height = _maxHeight;
   static const _knobHeight = 36.0;
 
   static const _forwardFraction = 0.8;
@@ -1081,7 +1094,13 @@ class _ThrottleLeverState extends State<_ThrottleLever>
   ];
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) =>
+      LayoutBuilder(builder: (context, constraints) {
+        _height = math.min(_maxHeight, constraints.maxHeight);
+        return _buildLever(context);
+      });
+
+  Widget _buildLever(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     return GestureDetector(
       onVerticalDragStart: _onDragStart,

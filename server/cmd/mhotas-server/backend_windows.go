@@ -30,22 +30,22 @@ func newBackend(ctx context.Context, name, input string, log *slog.Logger, cfg c
 			client.Close()
 			return nil, nil, err
 		}
-		return vj, telemetryStarter(ctx, client, vj, log), nil
+		return vj, telemetryStarter(ctx, client, vj, cfg.Aircraft, log), nil
 	case name == "simconnect":
 		sc, err := simconnect.New(ctx, log, cfg.Controls)
 		if err != nil {
 			return nil, nil, err
 		}
-		return sc, telemetryStarter(ctx, sc.SimlinkClient(), nil, log), nil
+		return sc, telemetryStarter(ctx, sc.SimlinkClient(), nil, cfg.Aircraft, log), nil
 	default:
 		return nil, nil, fmt.Errorf("unknown backend %q (want log or simconnect)", name)
 	}
 }
 
 // syncer (vJoy only) is fed the sim's throttle because a vJoy axis holds its last value.
-func telemetryStarter(ctx context.Context, client *simlink.Client, syncer control.ThrottleSyncer, log *slog.Logger) startTelemetryFunc {
+func telemetryStarter(ctx context.Context, client *simlink.Client, syncer control.ThrottleSyncer, profiles []config.AircraftProfile, log *slog.Logger) startTelemetryFunc {
 	return func(sink telemetry.Sink) {
-		src, err := telemetry.NewSource(client, syncer)
+		src, err := telemetry.NewSource(client, syncer, profiles, log)
 		if err != nil {
 			log.Error("telemetry source init failed", "err", err)
 			return

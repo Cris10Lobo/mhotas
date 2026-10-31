@@ -173,6 +173,12 @@ You only have to do this once. MSFS saves the bindings in a profile.
   vJoy throttle to match the sim, so it doesn't knock autothrottle off.
 - Calibration (Settings, Calibration): dead zone, response curve (expo), invert and smoothing for each
   axis. Changes apply right away and the server saves them to `config.json` next to the exe.
+- Reverse speedbrake (Settings, Speedbrake): turn on if the sim deploys when the phone's lever is
+  retracted, instead of changing the binding in MSFS.
+- Aircraft profiles (`aircraft` in `config.json`): some aircraft, like the FlyByWire A32NX, keep their
+  parking brake, spoiler and flap state in their own variables, so the phone would show the wrong state.
+  A profile tells the server which variable to read for an aircraft whose title contains a given text.
+  The A32NX one is built in; the server logs the loaded aircraft's title and which profile it picked.
 
 ## SimConnect input mode
 

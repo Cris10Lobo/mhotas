@@ -75,6 +75,13 @@ work due to how workspace mode resolves patterns; build from within each module'
 End-to-end manual test (validates the whole pipeline without MSFS): run `mhotas-server --backend=log` in
 one terminal, `udp-fake-phone` in another, and watch the server's log output, including the failsafe
 firing (pitch/roll/rudder snap to neutral, throttle holds) a few hundred ms after the fake phone stops.
+Never point the default sweep at a live sim: it toggles button 1, which is gear. `--speedbrake=<0..1>`
+holds only the speedbrake, with no buttons and the throttle untouched, and is safe against MSFS.
+
+Against a live sim and a phone on `adb` (wireless debugging works), `app/integration_test/sim_test.dart`
+drives the real flying screen and checks each command through TELEMETRY; `survey_test.dart` exercises
+every control and logs, for reading alongside `simprobe -watch`. Both take
+`--dart-define=MHOTAS_SERVER=<pc-ip>:9750` and need the aircraft on the ground, parking brake set.
 
 ### App (`app/`)
 
@@ -159,7 +166,9 @@ it's instant-feedback correction for how the user is currently holding the devic
 different from vJoy-based prior art: SimConnect can be *read* as well as written, so flap/gear/throttle/
 spoiler/trim position, parking brake, pause, autopilot and autothrottle state all stream back to the
 phone as TELEMETRY packets (on change, max ~20Hz, 1Hz keepalive). Telemetry is wired to the SimConnect
-connection itself, not to whichever input backend is active. See `docs/protocol.md`'s "Bidirectional sync" for why several of those exist (closing
+connection itself, not to whichever input backend is active. Some aircraft keep their real state
+outside the stock simvars, so `config.Aircraft` profiles (matched on `TITLE`) swap the variable a field
+is read from (`telemetry/profile.go`, read via `simlink.WatchExtra`); the FBW A32NX ships with one. See `docs/protocol.md`'s "Bidirectional sync" for why several of those exist (closing
 the loop so an in-sim change, not just a phone command, reaches the app instead of getting silently
 overwritten or misrepresented).
 

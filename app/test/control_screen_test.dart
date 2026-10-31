@@ -132,6 +132,7 @@ void main() {
           .runAsync(() => Future.delayed(const Duration(milliseconds: 600)));
       await tester.pump();
       expect(find.text('1/4'), findsOneWidget);
+      await tester.pump(const Duration(seconds: 2)); // drain the tap timers
     });
 
     testWidgets(
@@ -399,6 +400,32 @@ void main() {
     });
   });
 
+  testWidgets('flying screen fits a small phone in landscape', (tester) async {
+    // Pixel 4a in landscape (851x393) with its saved layout and the system
+    // bars showing (~52px), as when swiped in: the 300px throttle overflowed
+    // by 31px.
+    SharedPreferences.setMockInitialValues({
+      // Offsets saved on the Pixel 4a where it overflowed.
+      'mhotas.layout.offsets':
+          '{"speedbrake":[248.7,31.3],"trim":[-608.4,-49.1],'
+              '"autopilotDisconnect":[-429.5,-17.8],"gear":[151.6,-99.3],'
+              '"parkingBrake":[141.1,-102.2],"toeBrake":[273.1,93.1],'
+              '"flapLever":[255.3,57.8],"attitude":[214.2,27.6]}',
+    });
+    await tester.binding.setSurfaceSize(const Size(851, 341));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final c = ProviderContainer();
+    addTearDown(c.dispose);
+    await tester.pumpWidget(UncontrolledProviderScope(
+      container: c,
+      child: const MaterialApp(home: ControlScreen()),
+    ));
+    await tester.runAsync(() => Future.delayed(Duration.zero)); // prefs load
+    await tester.pump();
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+  });
+
   group('buttons/axes -> wire protocol', () {
     testWidgets('throttle and speedbrake are NaN until touched',
         (tester) async {
@@ -414,6 +441,35 @@ void main() {
         final first = await server.nextAxis();
         expect(first.throttle.isNaN, isTrue);
         expect(first.speedbrake.isNaN, isTrue);
+      });
+    });
+
+    testWidgets('a flap tap the sim ignores is re-sent', (tester) async {
+      await tester.runAsync(() async {
+        final server = await _FakeServer.start();
+        addTearDown(server.close);
+        final telemetry = StreamController<proto.Telemetry>(sync: true);
+        addTearDown(telemetry.close);
+        final container = ProviderContainer(overrides: [
+          telemetryProvider.overrideWith((ref) => telemetry.stream),
+        ]);
+        addTearDown(container.dispose);
+
+        await _pumpScreen(tester, container: container);
+        await _connect(tester, container, server);
+        telemetry.add(_telemetry(flapHandleIndex: 0, flapHandleIndexMax: 4));
+        await tester.pump();
+
+        await tester.drag(
+            find.byKey(const Key('flapLever')), const Offset(0, 40));
+        await tester.pump();
+        expect((await server.nextButton()).buttonId, ButtonIds.flapIncr);
+        expect((await server.nextButton()).pressed, isFalse);
+        // The sim never reports detent 1: the tap goes again after ~1s.
+        expect((await server.nextButton()).buttonId, ButtonIds.flapIncr);
+        telemetry.add(_telemetry(flapHandleIndex: 1, flapHandleIndexMax: 4));
+        await tester.pump();
+        await Future.delayed(const Duration(milliseconds: 400));
       });
     });
 

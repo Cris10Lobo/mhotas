@@ -107,6 +107,13 @@ not required for `AXIS`/`BUTTON` processing to function.
 | 18     | 4    | `spoilersHandle`       | float32, 0..1, `SPOILERS HANDLE POSITION`, shown as the tick beside the speedbrake lever |
 | 22     | 4    | `elevatorTrim`         | float32, -1..1, `ELEVATOR TRIM PCT`, shown on the trim rocker |
 
+The simvars named above are the defaults. An aircraft that keeps its real state elsewhere gets a profile
+in the server's `config.json` (`aircraft`, matched on the sim's `TITLE`) that reads a different variable
+for `flapHandleIndex`/`flapHandleIndexMax`/`spoilersHandle`/`spoilersArmed`/`parkingBrakeSet`. The FBW
+A32NX ships with one: its stock parking brake never sets, its stock spoiler arm stays on, its stock
+spoiler handle is a slewed surface position capped at 40% on the ground, and its stock flap index trails
+the handle by seconds and skips 1.
+
 These fields exist so the app can mirror the sim's real state rather than silently fighting a manual
 in-sim adjustment or guessing state locally (see "Bidirectional sync" below). A fixed struct rather than
 a generic key/value simvar schema. (v2-v5 carried 4 extra fields (airspeed/altitude/heading/vertical

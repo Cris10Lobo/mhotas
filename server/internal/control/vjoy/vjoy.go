@@ -46,6 +46,8 @@ type Backend struct {
 	sim  Sim
 	axes map[control.AxisID]axis
 
+	speedbrakeRaw int32 // last written; -1 before the first write
+
 	throttleMu  sync.Mutex // serializes throttle writes, resyncs and setting changes
 	sync        throttleSync
 	signed      bool
@@ -65,7 +67,7 @@ func New(log *slog.Logger, sim Sim) (*Backend, error) {
 	// A crashed session may have left a button held.
 	vjoylink.ReleaseButtons(deviceID)
 
-	b := &Backend{sim: sim, axes: map[control.AxisID]axis{}}
+	b := &Backend{sim: sim, axes: map[control.AxisID]axis{}, speedbrakeRaw: -1}
 	var missing []string
 	for id, usage := range axisUsage {
 		if max, ok := vjoylink.AxisMax(deviceID, usage); ok {
@@ -101,7 +103,19 @@ func (b *Backend) SetAxis(id control.AxisID, value float64) error {
 		return b.writeThrottle(value)
 	case control.AxisSpeedbrake:
 		// Retracted = axis minimum, like a hardware speedbrake lever.
-		return vjoylink.SetAxis(deviceID, a.usage, toRaw(value*2-1, a.max))
+		raw := toRaw(value*2-1, a.max)
+		// MSFS only acts on an axis change, so re-sending the value the axis
+		// already holds (first command after a reconnect, after the sim moved
+		// the handle itself) did nothing; step off it first, for long enough
+		// that MSFS's once-a-frame poll sees it. -1: unknown since startup.
+		if raw == b.speedbrakeRaw || b.speedbrakeRaw == -1 {
+			if err := vjoylink.SetAxis(deviceID, a.usage, raw^1); err != nil {
+				return err
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		b.speedbrakeRaw = raw
+		return vjoylink.SetAxis(deviceID, a.usage, raw)
 	default:
 		return vjoylink.SetAxis(deviceID, a.usage, toRaw(value, a.max))
 	}
