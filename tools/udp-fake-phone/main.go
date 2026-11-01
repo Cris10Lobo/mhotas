@@ -24,6 +24,7 @@ func run() error {
 	target := flag.String("target", "127.0.0.1:9750", "mhotas-server address")
 	device := flag.String("device", "udp-fake-phone", "device name sent in HELLO")
 	rate := flag.Float64("rate", 30, "AXIS packets per second")
+	speedbrake := flag.Float64("speedbrake", -1, "0..1: hold this speedbrake with every other axis neutral, throttle untouched and no buttons, instead of sweeping. The sweep toggles button 1 (gear): only use it with --backend=log")
 	flag.Parse()
 
 	addr, err := net.ResolveUDPAddr("udp", *target)
@@ -42,6 +43,10 @@ func run() error {
 		return err
 	}
 
+	if *speedbrake >= 0 {
+		holdSpeedbrake(conn, *rate, float32(*speedbrake))
+		return nil
+	}
 	sendAxisSweep(conn, *rate)
 	return nil
 }
@@ -53,6 +58,20 @@ func sayHello(conn *net.UDPConn, device string) error {
 	}
 	log.Printf("sent HELLO as %q, listening for HELLO_ACK...", device)
 	return nil
+}
+
+func holdSpeedbrake(conn *net.UDPConn, rate float64, v float32) {
+	ticker := time.NewTicker(time.Duration(float64(time.Second) / rate))
+	defer ticker.Stop()
+	log.Printf("holding speedbrake %v (Ctrl+C to stop)...", v)
+	var seq uint16
+	for range ticker.C {
+		seq++
+		axis := protocol.Axis{Throttle: float32(math.NaN()), Speedbrake: v}
+		if _, err := conn.Write(protocol.EncodeAxis(seq, axis)); err != nil {
+			log.Printf("write AXIS failed: %v", err)
+		}
+	}
 }
 
 // sendAxisSweep oscillates the axes and toggles a button every 5s, sent 3x like the real app.
@@ -70,10 +89,11 @@ func sendAxisSweep(conn *net.UDPConn, rate float64) {
 	for range ticker.C {
 		t := time.Since(start).Seconds()
 		axis := protocol.Axis{
-			Pitch:    float32(math.Sin(t * 0.5)),
-			Roll:     float32(math.Sin(t*0.3) * 0.7),
-			Throttle: float32((math.Sin(t*0.2) + 1) / 2),
-			Rudder:   float32(math.Sin(t*0.4) * 0.5),
+			Pitch:      float32(math.Sin(t * 0.5)),
+			Roll:       float32(math.Sin(t*0.3) * 0.7),
+			Throttle:   float32((math.Sin(t*0.2) + 1) / 2),
+			Rudder:     float32(math.Sin(t*0.4) * 0.5),
+			Speedbrake: float32((math.Sin(t*0.6) + 1) / 2),
 		}
 		seq++
 		if _, err := conn.Write(protocol.EncodeAxis(seq, axis)); err != nil {

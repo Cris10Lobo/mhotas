@@ -75,6 +75,66 @@ void main() {
       expect(find.text('A/T'), findsNothing);
     });
 
+    testWidgets('speedbrake knob holds the command; the sim shows as a tick',
+        (tester) async {
+      final controller = StreamController<proto.Telemetry>();
+      addTearDown(controller.close);
+      await _pumpScreen(tester, overrides: [
+        telemetryProvider.overrideWith((ref) => controller.stream),
+      ]);
+      final lever = find.descendant(
+          of: find.byKey(const Key('speedbrake')),
+          matching: find.byWidgetPredicate(
+              (w) => w.runtimeType.toString() == '_SpeedbrakeLever'));
+      final knob = find.descendant(
+          of: lever,
+          matching: find.byWidgetPredicate(
+              (w) => w is Container && w.constraints?.maxWidth == 40));
+      final tick = find.byKey(const Key('speedbrakeSimTick'));
+
+      await tester.drag(lever, const Offset(0, -160));
+      await tester.pumpAndSettle();
+      final commandedY = tester.getCenter(knob).dy;
+
+      // The sim disagrees (e.g. a reversed binding): the knob stays put.
+      controller.add(_telemetry(spoilersHandle: 0));
+      await tester.pumpAndSettle();
+      await tester
+          .runAsync(() => Future.delayed(const Duration(milliseconds: 600)));
+      controller.add(_telemetry(spoilersHandle: 0));
+      await tester.pumpAndSettle();
+      expect(tester.getCenter(knob).dy, commandedY);
+      expect(tester.getCenter(tick).dy, greaterThan(commandedY));
+
+      controller.add(_telemetry(spoilersHandle: 1));
+      await tester.pumpAndSettle();
+      expect(tester.getCenter(tick).dy, closeTo(commandedY, 0.5));
+    });
+
+    testWidgets('flap lever drops a detent one tap jumps over (FBW A32NX)',
+        (tester) async {
+      final controller = StreamController<proto.Telemetry>();
+      addTearDown(controller.close);
+      await _pumpScreen(tester, overrides: [
+        telemetryProvider.overrideWith((ref) => controller.stream),
+      ]);
+      controller.add(_telemetry(flapHandleIndexMax: 5));
+      await tester.pumpAndSettle();
+      expect(find.text('0/5'), findsOneWidget);
+
+      // One detent down sends one FLAPS_INCR; the A32NX lands on index 2.
+      await tester.drag(
+          find.byKey(const Key('flapLever')), const Offset(0, 32));
+      await tester.pumpAndSettle();
+      controller.add(_telemetry(flapHandleIndex: 2, flapHandleIndexMax: 5));
+      await tester.pumpAndSettle();
+      await tester
+          .runAsync(() => Future.delayed(const Duration(milliseconds: 600)));
+      await tester.pump();
+      expect(find.text('1/4'), findsOneWidget);
+      await tester.pump(const Duration(seconds: 2)); // drain the tap timers
+    });
+
     testWidgets(
         'throttle lever ignores sim readings after a drag until the sim stops moving',
         (tester) async {
@@ -340,7 +400,115 @@ void main() {
     });
   });
 
+  testWidgets('flying screen fits a small phone in landscape', (tester) async {
+    // Pixel 4a in landscape (851x393) with its saved layout and the system
+    // bars showing (~52px), as when swiped in: the 300px throttle overflowed
+    // by 31px.
+    SharedPreferences.setMockInitialValues({
+      // Offsets saved on the Pixel 4a where it overflowed.
+      'mhotas.layout.offsets':
+          '{"speedbrake":[248.7,31.3],"trim":[-608.4,-49.1],'
+              '"autopilotDisconnect":[-429.5,-17.8],"gear":[151.6,-99.3],'
+              '"parkingBrake":[141.1,-102.2],"toeBrake":[273.1,93.1],'
+              '"flapLever":[255.3,57.8],"attitude":[214.2,27.6]}',
+    });
+    await tester.binding.setSurfaceSize(const Size(851, 341));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final c = ProviderContainer();
+    addTearDown(c.dispose);
+    await tester.pumpWidget(UncontrolledProviderScope(
+      container: c,
+      child: const MaterialApp(home: ControlScreen()),
+    ));
+    await tester.runAsync(() => Future.delayed(Duration.zero)); // prefs load
+    await tester.pump();
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+  });
+
   group('buttons/axes -> wire protocol', () {
+    testWidgets('throttle and speedbrake are NaN until touched',
+        (tester) async {
+      await tester.runAsync(() async {
+        final server = await _FakeServer.start();
+        addTearDown(server.close);
+        final container = ProviderContainer();
+        addTearDown(container.dispose);
+
+        await _pumpScreen(tester, container: container);
+        await _connect(tester, container, server);
+
+        final first = await server.nextAxis();
+        expect(first.throttle.isNaN, isTrue);
+        expect(first.speedbrake.isNaN, isTrue);
+      });
+    });
+
+    testWidgets('a flap tap the sim ignores is re-sent', (tester) async {
+      await tester.runAsync(() async {
+        final server = await _FakeServer.start();
+        addTearDown(server.close);
+        final telemetry = StreamController<proto.Telemetry>(sync: true);
+        addTearDown(telemetry.close);
+        final container = ProviderContainer(overrides: [
+          telemetryProvider.overrideWith((ref) => telemetry.stream),
+        ]);
+        addTearDown(container.dispose);
+
+        await _pumpScreen(tester, container: container);
+        await _connect(tester, container, server);
+        telemetry.add(_telemetry(flapHandleIndex: 0, flapHandleIndexMax: 4));
+        await tester.pump();
+
+        await tester.drag(
+            find.byKey(const Key('flapLever')), const Offset(0, 40));
+        await tester.pump();
+        expect((await server.nextButton()).buttonId, ButtonIds.flapIncr);
+        expect((await server.nextButton()).pressed, isFalse);
+        // The sim never reports detent 1: the tap goes again after ~1s.
+        expect((await server.nextButton()).buttonId, ButtonIds.flapIncr);
+        telemetry.add(_telemetry(flapHandleIndex: 1, flapHandleIndexMax: 4));
+        await tester.pump();
+        await Future.delayed(const Duration(milliseconds: 400));
+      });
+    });
+
+    testWidgets('a multi-detent flap move waits for the sim between taps',
+        (tester) async {
+      await tester.runAsync(() async {
+        final server = await _FakeServer.start();
+        addTearDown(server.close);
+        final telemetry = StreamController<proto.Telemetry>(sync: true);
+        addTearDown(telemetry.close);
+        final container = ProviderContainer(overrides: [
+          telemetryProvider.overrideWith((ref) => telemetry.stream),
+        ]);
+        addTearDown(container.dispose);
+
+        await _pumpScreen(tester, container: container);
+        await _connect(tester, container, server);
+        telemetry.add(_telemetry(flapHandleIndex: 0, flapHandleIndexMax: 4));
+        await tester.pump();
+
+        await tester.drag(
+            find.byKey(const Key('flapLever')), const Offset(0, 80));
+        await tester.pump();
+        expect((await server.nextButton()).buttonId, ButtonIds.flapIncr);
+        expect((await server.nextButton()).pressed, isFalse);
+
+        // No second tap until the sim reports the first detent.
+        await Future.delayed(const Duration(milliseconds: 400));
+        expect(server.hasPendingButton, isFalse);
+        telemetry.add(_telemetry(flapHandleIndex: 1, flapHandleIndexMax: 4));
+        await tester.pump();
+        expect((await server.nextButton()).buttonId, ButtonIds.flapIncr);
+        // Let the second tap's wait end before teardown disposes providers.
+        telemetry.add(_telemetry(flapHandleIndex: 2, flapHandleIndexMax: 4));
+        await tester.pump();
+        await Future.delayed(const Duration(milliseconds: 100));
+      });
+    });
+
     testWidgets('momentary and toggle buttons send the right BUTTON packets',
         (tester) async {
       await tester.runAsync(() async {
@@ -415,7 +583,7 @@ void main() {
       });
     });
 
-    testWidgets('speedbrake lever drag sends incr then decr taps',
+    testWidgets('speedbrake lever drag sends the speedbrake axis',
         (tester) async {
       await tester.runAsync(() async {
         final server = await _FakeServer.start();
@@ -432,14 +600,12 @@ void main() {
                 (w) => w.runtimeType.toString() == '_SpeedbrakeLever'));
 
         await tester.drag(lever, const Offset(0, -80));
-        final incr = await server.nextButton();
-        expect(incr.buttonId, ButtonIds.spoilerIncr);
-        expect((await server.nextButton()).pressed, isFalse); // release
+        final up = await server.nextAxis(where: (a) => a.speedbrake > 0.3);
+        expect(up.speedbrake, lessThanOrEqualTo(1));
 
-        await tester.drag(lever, const Offset(0, 80));
-        final decr = await server.nextButton();
-        expect(decr.buttonId, ButtonIds.spoilerDecr);
-        expect((await server.nextButton()).pressed, isFalse); // release
+        // Back past the retract snap band lands exactly on 0.
+        await tester.drag(lever, const Offset(0, 200));
+        await server.nextAxis(where: (a) => a.speedbrake == 0);
       });
     });
 
@@ -568,6 +734,7 @@ proto.Telemetry _telemetry({
   bool onGround = false,
   double groundSpeedKnots = 0,
   double elevatorTrim = 0,
+  double spoilersHandle = 0,
   bool autothrottleActive = false,
 }) =>
     proto.Telemetry(
@@ -581,6 +748,7 @@ proto.Telemetry _telemetry({
       onGround: onGround,
       groundSpeedKnots: groundSpeedKnots,
       elevatorTrim: elevatorTrim,
+      spoilersHandle: spoilersHandle,
       autothrottleActive: autothrottleActive,
     );
 
@@ -683,6 +851,12 @@ class _FakeServer {
   }
 
   int get port => _socket.port;
+
+  /// Whether a new BUTTON event (not a resend of the last one) is queued.
+  bool get hasPendingButton => _queue._pending
+      .where((d) => d[0] == proto.PacketType.button)
+      .map(proto.decodeButton)
+      .any((b) => (b.buttonId, b.pressed) != _lastButton);
 
   Future<proto.Button> nextButton() async {
     while (true) {

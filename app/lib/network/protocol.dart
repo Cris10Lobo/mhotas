@@ -6,7 +6,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 class ProtocolVersion {
-  static const int current = 8;
+  static const int current = 9;
 }
 
 class PacketType {
@@ -68,7 +68,7 @@ String _decodeName(Uint8List field) {
 
 // ---- AXIS (0x01) ----
 
-const int axisPacketSize = headerSize + 16;
+const int axisPacketSize = headerSize + 20;
 
 /// Stick/throttle/rudder position; only the recenter offset is applied phone-side.
 class Axis {
@@ -76,12 +76,17 @@ class Axis {
   final double roll; // -1..1
   final double throttle; // -1..1, negative = reverse thrust
   final double rudder; // -1..1
+  final double speedbrake; // 0..1
+
+  // throttle and speedbrake are NaN until first moved, so connecting doesn't
+  // override the sim's lever positions.
 
   const Axis({
     required this.pitch,
     required this.roll,
     required this.throttle,
     required this.rudder,
+    required this.speedbrake,
   });
 }
 
@@ -92,6 +97,7 @@ Uint8List encodeAxis(int seq, Axis a) {
   bd.setFloat32(8, a.roll, Endian.little);
   bd.setFloat32(12, a.throttle, Endian.little);
   bd.setFloat32(16, a.rudder, Endian.little);
+  bd.setFloat32(20, a.speedbrake, Endian.little);
   return buf;
 }
 
@@ -105,6 +111,7 @@ Axis decodeAxis(Uint8List b) {
     roll: bd.getFloat32(8, Endian.little),
     throttle: bd.getFloat32(12, Endian.little),
     rudder: bd.getFloat32(16, Endian.little),
+    speedbrake: bd.getFloat32(20, Endian.little),
   );
 }
 
@@ -303,6 +310,7 @@ class ConfigAxis {
   static const int roll = 1;
   static const int throttle = 2;
   static const int rudder = 3;
+  static const int speedbrake = 4; // only invert applies
 }
 
 const int _axisCalibrationSize = 18;
@@ -347,7 +355,7 @@ AxisCalibration _decodeAxisCalibration(ByteData bd, int offset) {
   );
 }
 
-const int configPacketSize = headerSize + 4 * _axisCalibrationSize;
+const int configPacketSize = headerSize + 5 * _axisCalibrationSize;
 
 /// Full calibration snapshot, pushed after HELLO_ACK and after every CONFIG_SET.
 class Config {
@@ -355,12 +363,14 @@ class Config {
   final AxisCalibration roll;
   final AxisCalibration throttle;
   final AxisCalibration rudder;
+  final AxisCalibration speedbrake;
 
   const Config({
     required this.pitch,
     required this.roll,
     required this.throttle,
     required this.rudder,
+    required this.speedbrake,
   });
 }
 
@@ -374,6 +384,7 @@ Config decodeConfig(Uint8List b) {
     roll: _decodeAxisCalibration(bd, 4 + _axisCalibrationSize),
     throttle: _decodeAxisCalibration(bd, 4 + 2 * _axisCalibrationSize),
     rudder: _decodeAxisCalibration(bd, 4 + 3 * _axisCalibrationSize),
+    speedbrake: _decodeAxisCalibration(bd, 4 + 4 * _axisCalibrationSize),
   );
 }
 

@@ -11,6 +11,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"unsafe"
@@ -36,6 +37,8 @@ const (
 
 	defAircraftState uint32 = 100
 	reqAircraftState uint32 = 200
+	defExtra         uint32 = 101
+	reqExtra         uint32 = 201
 
 	// Must be in SimConnect's user range (1-999,999,849).
 	reqInputEvents uint32 = 400
@@ -65,6 +68,12 @@ type Client struct {
 	// The event only flips, so callers guessing their own state would desync each other.
 	reverseArmedMu sync.Mutex
 	reverseArmed   bool
+
+	// WatchExtra's var list, re-registered on every connect.
+	extraMu    sync.Mutex
+	extraNames []string
+	extraUnits []string
+	extra      atomic.Value // holds []float64
 }
 
 // AircraftState mirrors SimConnect's struct layout for the telemetry read;
@@ -91,6 +100,13 @@ type AircraftState struct {
 	ManagedThrottleActive int32 // Airbus A/THR
 	AirspeedHold          int32
 	MachHold              int32
+	Title                 [256]byte // NUL-terminated
+}
+
+// TitleString is the aircraft's TITLE, which per-aircraft profiles match on.
+func (s AircraftState) TitleString() string {
+	before, _, _ := strings.Cut(string(s.Title[:]), "\x00")
+	return before
 }
 
 // LatestState returns the most recent reading, or false if none has arrived yet.
@@ -130,9 +146,13 @@ func Connect(ctx context.Context, log *slog.Logger) *Client {
 				setupEvents(client)
 				c.setupGenericEvents(client)
 				setupTelemetryRead(client)
+				c.setupExtra(client)
 				c.inputEventsMu.Lock()
 				c.inputEvents = map[string]uint64{}
 				c.inputEventsMu.Unlock()
+				probeDefsMu.Lock()
+				clear(probeDefs)
+				probeDefsMu.Unlock()
 				if err := c.mgr.EnumerateInputEvents(reqInputEvents); err != nil {
 					// Expected on MSFS2020; Input Events are MSFS2024-only.
 					c.log.Info("input event enumeration unavailable", "err", err)
@@ -313,6 +333,7 @@ func setupTelemetryRead(client engine.Client) {
 	client.AddToDataDefinition(defAircraftState, "AUTOPILOT MANAGED THROTTLE ACTIVE", "bool", types.SIMCONNECT_DATATYPE_INT32, 0, 13)
 	client.AddToDataDefinition(defAircraftState, "AUTOPILOT AIRSPEED HOLD", "bool", types.SIMCONNECT_DATATYPE_INT32, 0, 14)
 	client.AddToDataDefinition(defAircraftState, "AUTOPILOT MACH HOLD", "bool", types.SIMCONNECT_DATATYPE_INT32, 0, 15)
+	client.AddToDataDefinition(defAircraftState, "TITLE", "", types.SIMCONNECT_DATATYPE_STRING256, 0, 16)
 
 	client.RequestDataOnSimObject(
 		reqAircraftState, defAircraftState,
@@ -334,11 +355,55 @@ func (c *Client) watchTelemetry(messages <-chan engine.Message) {
 			continue
 		}
 		data := msg.AsSimObjectData()
-		if uint32(data.DwRequestID) != reqAircraftState {
-			continue
+		switch uint32(data.DwRequestID) {
+		case reqAircraftState:
+			c.state.Store(*engine.CastDataAs[AircraftState](&data.DwData))
+		case reqExtra:
+			c.extraMu.Lock()
+			n := len(c.extraNames)
+			c.extraMu.Unlock()
+			// A message sent before a WatchExtra change has the old layout.
+			if int(data.DwDefineCount) != n {
+				continue
+			}
+			c.extra.Store(append([]float64(nil), unsafe.Slice((*float64)(unsafe.Pointer(&data.DwData)), n)...))
 		}
-		c.state.Store(*engine.CastDataAs[AircraftState](&data.DwData))
 	}
+}
+
+// WatchExtra replaces the extra vars read alongside AircraftState (as
+// float64, every changed frame); an empty list stops the read.
+func (c *Client) WatchExtra(names, units []string) {
+	c.extraMu.Lock()
+	c.extraNames, c.extraUnits = names, units
+	c.extraMu.Unlock()
+	c.extra.Store([]float64(nil))
+	if client, err := c.connected(); err == nil {
+		c.setupExtra(client)
+	}
+}
+
+// LatestExtra returns the newest WatchExtra reading, in names order, or nil
+// before the first one.
+func (c *Client) LatestExtra() []float64 {
+	v, _ := c.extra.Load().([]float64)
+	return v
+}
+
+func (c *Client) setupExtra(client engine.Client) {
+	c.extraMu.Lock()
+	defer c.extraMu.Unlock()
+	client.ClearDataDefinition(defExtra)
+	if len(c.extraNames) == 0 {
+		client.RequestDataOnSimObject(reqExtra, defExtra, types.SIMCONNECT_OBJECT_ID_USER,
+			types.SIMCONNECT_PERIOD_NEVER, 0, 0, 0, 0)
+		return
+	}
+	for i, name := range c.extraNames {
+		client.AddToDataDefinition(defExtra, name, c.extraUnits[i], types.SIMCONNECT_DATATYPE_FLOAT64, 0, uint32(i))
+	}
+	client.RequestDataOnSimObject(reqExtra, defExtra, types.SIMCONNECT_OBJECT_ID_USER,
+		types.SIMCONNECT_PERIOD_SIM_FRAME, types.SIMCONNECT_DATA_REQUEST_FLAG_CHANGED, 0, 0, 0)
 }
 
 var errNotConnected = errors.New("simlink: not connected to MSFS2024 yet")
@@ -444,4 +509,56 @@ func dllOption(log *slog.Logger) manager.Option {
 		}
 	}
 	return manager.WithAutoDetect()
+}
+
+// probeDefs maps a ReadOnce var list to its definition/request ID, clear of
+// the fixed IDs above. Reused because SimConnect caps definitions per
+// connection (~1000 reads in, every request failed).
+var (
+	probeDefsMu sync.Mutex
+	probeDefs   = map[string]uint32{}
+)
+
+// ReadOnce reads arbitrary simvars or L:vars (e.g. "L:A32NX_FLAPS_HANDLE_INDEX")
+// once, as float64 in the given units. For dev probing, not the hot path.
+func (c *Client) ReadOnce(ctx context.Context, names, units []string) ([]float64, error) {
+	client, err := c.connected()
+	if err != nil {
+		return nil, err
+	}
+	key := fmt.Sprint(names, units)
+	probeDefsMu.Lock()
+	id, defined := probeDefs[key]
+	if !defined {
+		id = 500_000 + uint32(len(probeDefs))
+		probeDefs[key] = id
+		for i, name := range names {
+			client.AddToDataDefinition(id, name, units[i], types.SIMCONNECT_DATATYPE_FLOAT64, 0, uint32(i))
+		}
+	}
+	probeDefsMu.Unlock()
+	sub := c.mgr.SubscribeWithFilter(fmt.Sprintf("probe-%d", id), 4, func(msg engine.Message) bool {
+		return types.SIMCONNECT_RECV_ID(msg.DwID) == types.SIMCONNECT_RECV_ID_SIMOBJECT_DATA &&
+			uint32(msg.AsSimObjectData().DwRequestID) == id
+	})
+	defer sub.Unsubscribe()
+
+	client.RequestDataOnSimObject(id, id, types.SIMCONNECT_OBJECT_ID_USER, types.SIMCONNECT_PERIOD_ONCE, 0, 0, 0, 0)
+
+	select {
+	case <-ctx.Done():
+		return nil, fmt.Errorf("simlink: no reply (unknown var or unit?): %w", ctx.Err())
+	case msg, ok := <-sub.Messages():
+		if !ok {
+			return nil, errNotConnected
+		}
+		if msg.Err != nil {
+			return nil, msg.Err
+		}
+		data := msg.AsSimObjectData()
+		if int(data.DwDefineCount) != len(names) {
+			return nil, fmt.Errorf("simlink: got %d values for %d vars", data.DwDefineCount, len(names))
+		}
+		return append([]float64(nil), unsafe.Slice((*float64)(unsafe.Pointer(&data.DwData)), len(names))...), nil
+	}
 }

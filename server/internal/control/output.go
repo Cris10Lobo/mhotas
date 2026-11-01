@@ -11,6 +11,7 @@ const (
 	AxisRoll
 	AxisThrottle
 	AxisRudder
+	AxisSpeedbrake // 0..1, not -1..1
 )
 
 func (a AxisID) String() string {
@@ -23,6 +24,8 @@ func (a AxisID) String() string {
 		return "throttle"
 	case AxisRudder:
 		return "rudder"
+	case AxisSpeedbrake:
+		return "speedbrake"
 	default:
 		return fmt.Sprintf("axis(%d)", uint8(a))
 	}
@@ -39,8 +42,8 @@ const (
 	ButtonFlapIncr
 	ButtonFlapDecr
 	ButtonToeBrake
-	ButtonSpoilerIncr
-	ButtonSpoilerDecr
+	_ // 7, 8: spoiler INC/DEC until the speedbrake became an axis
+	_
 	ButtonSpoilerArm
 	ButtonAutopilotDisconnect
 	ButtonTrimUp
@@ -51,10 +54,11 @@ const (
 )
 
 var axisNames = map[string]AxisID{
-	"pitch":    AxisPitch,
-	"roll":     AxisRoll,
-	"throttle": AxisThrottle,
-	"rudder":   AxisRudder,
+	"pitch":      AxisPitch,
+	"roll":       AxisRoll,
+	"throttle":   AxisThrottle,
+	"rudder":     AxisRudder,
+	"speedbrake": AxisSpeedbrake,
 }
 
 var buttonNames = map[string]ButtonID{
@@ -64,8 +68,6 @@ var buttonNames = map[string]ButtonID{
 	"flap_incr":            ButtonFlapIncr,
 	"flap_decr":            ButtonFlapDecr,
 	"toe_brake":            ButtonToeBrake,
-	"spoiler_incr":         ButtonSpoilerIncr,
-	"spoiler_decr":         ButtonSpoilerDecr,
 	"spoiler_arm":          ButtonSpoilerArm,
 	"autopilot_disconnect": ButtonAutopilotDisconnect,
 	"trim_up":              ButtonTrimUp,

@@ -31,6 +31,9 @@ func defaultMappings() map[string]config.ControlMapping {
 		"roll":     {Driver: driverKEvent, Event: "AXIS_AILERONS_SET"},
 		"rudder":   {Driver: driverKEvent, Event: "AXIS_RUDDER_SET"},
 		"throttle": {Driver: driverThrottleEx1},
+		// An absolute position, unlike SPOILERS_INC/DEC, which some aircraft
+		// (FBW A32NX) ignore.
+		"speedbrake": {Driver: driverKEvent, Event: "SPOILERS_SET"},
 
 		"gear":                 {Driver: driverKEvent, Event: "GEAR_TOGGLE"},
 		"parking_brake":        {Driver: driverKEvent, Event: "PARKING_BRAKES"},
@@ -38,8 +41,6 @@ func defaultMappings() map[string]config.ControlMapping {
 		"flap_incr":            {Driver: driverKEvent, Event: "FLAPS_INCR"},
 		"flap_decr":            {Driver: driverKEvent, Event: "FLAPS_DECR"},
 		"toe_brake":            {Driver: driverToeBrake},
-		"spoiler_incr":         {Driver: driverKEvent, Event: "SPOILERS_INC"},
-		"spoiler_decr":         {Driver: driverKEvent, Event: "SPOILERS_DEC"},
 		"spoiler_arm":          {Driver: driverSpoilerArm},
 		"autopilot_disconnect": {Driver: driverKEvent, Event: "AUTOPILOT_OFF"},
 		"trim_up":              {Driver: driverKEvent, Event: "ELEV_TRIM_UP"},

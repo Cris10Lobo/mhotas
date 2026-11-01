@@ -150,7 +150,7 @@ func TestAxisAppliesCalibrationAndReachesBackend(t *testing.T) {
 	_, backend, client := newTestServer(t, cfg)
 	sendHello(t, client)
 
-	pkt := protocol.EncodeAxis(2, protocol.Axis{Pitch: 0.5, Roll: 0.25, Throttle: 0.8, Rudder: -0.3})
+	pkt := protocol.EncodeAxis(2, protocol.Axis{Pitch: 0.5, Roll: 0.25, Throttle: 0.8, Rudder: -0.3, Speedbrake: 1.5})
 	if _, err := client.Write(pkt); err != nil {
 		t.Fatalf("write AXIS: %v", err)
 	}
@@ -165,11 +165,57 @@ func TestAxisAppliesCalibrationAndReachesBackend(t *testing.T) {
 			if roll != 0.25 {
 				t.Fatalf("roll = %v, want 0.25", roll)
 			}
+			if sb, _ := backend.lastAxis(control.AxisSpeedbrake); sb != 1 {
+				t.Fatalf("speedbrake = %v, want 1 (clamped)", sb)
+			}
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatal("timed out waiting for backend to receive AXIS values")
+}
+
+func TestUntouchedThrottleAndSpeedbrakeAreNotSent(t *testing.T) {
+	cfg := config.Default()
+	cfg.ListenPort = 0
+	cfg.Speedbrake.Curve.Invert = true
+	_, backend, client := newTestServer(t, cfg)
+	sendHello(t, client)
+
+	nan := float32(math.NaN())
+	pkt := protocol.EncodeAxis(2, protocol.Axis{Pitch: 0.5, Throttle: nan, Speedbrake: nan})
+	if _, err := client.Write(pkt); err != nil {
+		t.Fatalf("write AXIS: %v", err)
+	}
+	waitAxis(t, backend, control.AxisPitch)
+	if _, ok := backend.lastAxis(control.AxisThrottle); ok {
+		t.Fatal("NaN throttle reached the backend")
+	}
+	if _, ok := backend.lastAxis(control.AxisSpeedbrake); ok {
+		t.Fatal("NaN speedbrake reached the backend")
+	}
+
+	// First real value is sent, with the speedbrake inverted.
+	pkt = protocol.EncodeAxis(3, protocol.Axis{Throttle: nan, Speedbrake: 0.25})
+	if _, err := client.Write(pkt); err != nil {
+		t.Fatalf("write AXIS: %v", err)
+	}
+	if got := waitAxis(t, backend, control.AxisSpeedbrake); got != 0.75 {
+		t.Fatalf("speedbrake = %v, want 0.75 (inverted)", got)
+	}
+}
+
+func waitAxis(t *testing.T, backend *fakeBackend, id control.AxisID) float64 {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if v, ok := backend.lastAxis(id); ok {
+			return v
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %v", id)
+	return 0
 }
 
 func TestButtonDeduplicatesByEventID(t *testing.T) {
@@ -348,7 +394,7 @@ func TestFailsafeNeutralizesAxisAfterTimeout(t *testing.T) {
 	_, backend, client := newTestServer(t, cfg)
 	sendHello(t, client)
 
-	pkt := protocol.EncodeAxis(2, protocol.Axis{Pitch: 1, Roll: 1, Throttle: 1, Rudder: 1})
+	pkt := protocol.EncodeAxis(2, protocol.Axis{Pitch: 1, Roll: 1, Throttle: 1, Rudder: 1, Speedbrake: 0.5})
 	if _, err := client.Write(pkt); err != nil {
 		t.Fatalf("write AXIS: %v", err)
 	}
@@ -357,7 +403,8 @@ func TestFailsafeNeutralizesAxisAfterTimeout(t *testing.T) {
 	for time.Now().Before(deadline) {
 		pitch, _ := backend.lastAxis(control.AxisPitch)
 		throttle, _ := backend.lastAxis(control.AxisThrottle)
-		if pitch == 0 && throttle == 1 {
+		speedbrake, _ := backend.lastAxis(control.AxisSpeedbrake)
+		if pitch == 0 && throttle == 1 && speedbrake == 0.5 {
 			return
 		}
 		time.Sleep(20 * time.Millisecond)

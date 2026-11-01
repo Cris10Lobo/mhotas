@@ -61,8 +61,8 @@ func (b *Backend) SetSignedThrottleIdle(idle float64) {
 	b.out.SetSignedThrottleIdle(idle)
 }
 
-// toAxisRange maps -1..1 to +-simlink.AxisRange. Only for centered axes;
-// throttle uses toSignedThrottleRaw.
+// toAxisRange maps -1..1 to +-simlink.AxisRange (speedbrake's 0..1 to
+// SPOILERS_SET's 0..AxisRange). Throttle uses toSignedThrottleRaw.
 func toAxisRange(v float64) int32 {
 	return int32(max(-1, min(1, v)) * simlink.AxisRange)
 }

@@ -27,8 +27,6 @@ class ButtonIds {
   static const int flapIncr = 4;
   static const int flapDecr = 5;
   static const int toeBrake = 6;
-  static const int spoilerIncr = 7;
-  static const int spoilerDecr = 8;
   static const int spoilerArm = 9;
   static const int autopilotDisconnect = 10;
   static const int trimUp = 11;
@@ -67,6 +65,9 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
     });
     _sendTimer =
         Timer.periodic(const Duration(milliseconds: 33), (_) => _sendAxis());
+    // The provider outlives this screen; a lever value from an earlier
+    // session would otherwise override the sim on the first packet.
+    Future.microtask(() => ref.read(sliderAxisProvider.notifier).reset());
   }
 
   Future<void> _openSettings() async {
@@ -87,6 +88,7 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
               gyroPaused ? 0 : (manualJoystick ? _joystick.dx : _attitude.roll),
           throttle: slider.throttle,
           rudder: slider.rudder,
+          speedbrake: slider.speedbrake,
         ));
   }
 
@@ -105,12 +107,59 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
     _sendButton(buttonId, false);
   }
 
-  // SimConnect only has step events (no set-to-detent), so N detents are N
-  // sequential press/release pairs.
-  Future<void> _stepButton(int incrId, int decrId, int delta) async {
-    for (var i = 0; i < delta.abs(); i++) {
-      await _tapButton(delta > 0 ? incrId : decrId);
+  // SimConnect only has step events (no set-to-detent), so a move is taps
+  // toward the target until the sim reports it. The FBW A32NX drops taps
+  // that come while its handle is still moving, even after its index has
+  // updated, so taps are spaced and a tap the sim didn't act on within 1s is
+  // re-sent. The tap cap stops an aircraft whose index lags or never changes
+  // from being tapped forever.
+  Future<void> _stepFlaps(int delta) async {
+    int? index() => ref.read(telemetryProvider).valueOrNull?.flapHandleIndex;
+    final start = index();
+    if (start == null) return;
+    final target = start + delta;
+    for (var taps = 0; taps < delta.abs() + 2 && mounted; taps++) {
+      final before = index();
+      // Reached or passed: an aircraft may skip an index (0 -> 2).
+      if (before == null || (delta > 0 ? before >= target : before <= target)) {
+        return;
+      }
+      await _tapButton(delta > 0 ? ButtonIds.flapIncr : ButtonIds.flapDecr);
+      final deadline = DateTime.now().add(const Duration(seconds: 1));
+      while (
+          mounted && index() == before && DateTime.now().isBefore(deadline)) {
+        await Future.delayed(const Duration(milliseconds: 20));
+      }
+      await Future.delayed(const Duration(milliseconds: 250));
     }
+  }
+
+  bool _nudgeWarned = false;
+
+  // Nudge sends no axis, so in vJoy mode it only works if buttons 13-15 are
+  // bound in MSFS; say so once rather than leave +/- silently dead.
+  Future<void> _nudge(int buttonId) async {
+    final before = ref.read(telemetryProvider).valueOrNull;
+    await _tapButton(buttonId);
+    if (_nudgeWarned || before == null || before.autothrottleActive) return;
+    final up = buttonId == ButtonIds.throttleIncr;
+    if (up ? before.throttlePercent >= 0.99 : before.throttlePercent <= 0.01) {
+      return;
+    }
+    await Future.delayed(const Duration(milliseconds: 1500));
+    final after = ref.read(telemetryProvider).valueOrNull;
+    if (!mounted ||
+        after == null ||
+        after.throttlePercent != before.throttlePercent) {
+      return;
+    }
+    _nudgeWarned = true;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text("The sim's throttle didn't move. In vJoy mode, bind vJoy "
+          'button ${up ? 13 : 14} to ${up ? 'INCREASE' : 'DECREASE'} THROTTLE '
+          'in MSFS (see Settings > Nudge throttle).'),
+      duration: const Duration(seconds: 8),
+    ));
   }
 
   // HapticFeedback can't loop; this is why the vibration package is needed.
@@ -168,6 +217,13 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
     final nudgeThrottle = ref.watch(nudgeThrottleProvider);
     final layoutEditMode = ref.watch(layoutEditModeProvider);
     final gyroPaused = ref.watch(gyroPausedProvider);
+
+    ref.listen(connectionStatusProvider, (previous, next) {
+      if (next.valueOrNull == ConnectionStatus.connected &&
+          previous?.valueOrNull != ConnectionStatus.connected) {
+        ref.read(sliderAxisProvider.notifier).reset();
+      }
+    });
 
     // Recenter on unpause: the grip the phone settled into while set down
     // is the new neutral, so resuming doesn't jolt the aircraft.
@@ -298,10 +354,9 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
                                 ),
                                 const SizedBox(height: 8),
                                 _SpeedbrakeLever(
-                                  onStep: (n) => _stepButton(
-                                      ButtonIds.spoilerIncr,
-                                      ButtonIds.spoilerDecr,
-                                      n),
+                                  onChanged: (v) => ref
+                                      .read(sliderAxisProvider.notifier)
+                                      .setSpeedbrake(v),
                                   synced: telemetry?.spoilersHandle,
                                 ),
                               ],
@@ -314,8 +369,7 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
                         child: _Movable(
                           id: 'flapLever',
                           child: _FlapLever(
-                            onStep: (n) => _stepButton(
-                                ButtonIds.flapIncr, ButtonIds.flapDecr, n),
+                            onStep: _stepFlaps,
                             synced: telemetry?.flapHandleIndex,
                             max: telemetry?.flapHandleIndexMax,
                           ),
@@ -398,10 +452,8 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
                                   throttlePercent: telemetry?.throttlePercent,
                                   autothrottle:
                                       telemetry?.autothrottleActive ?? false,
-                                  onIncr: () =>
-                                      _tapButton(ButtonIds.throttleIncr),
-                                  onDecr: () =>
-                                      _tapButton(ButtonIds.throttleDecr),
+                                  onIncr: () => _nudge(ButtonIds.throttleIncr),
+                                  onDecr: () => _nudge(ButtonIds.throttleDecr),
                                   onReverseArmChanged: (pressed) => _sendButton(
                                       ButtonIds.throttleReverseArm, pressed),
                                 )
@@ -621,7 +673,8 @@ class _ControlLabel extends StatelessWidget {
             ),
           ),
         ),
-        child,
+        // Lets a tall control (the throttle) shrink instead of overflowing.
+        Flexible(child: child),
       ],
     );
   }
@@ -917,8 +970,10 @@ class _ThrottleLever extends StatefulWidget {
 
 class _ThrottleLeverState extends State<_ThrottleLever>
     with SingleTickerProviderStateMixin {
-  // 320 overflows the row by 8px.
-  static const _height = 300.0;
+  // 320 overflows the row by 8px. Shrinks to fit: on a Pixel 4a in landscape
+  // with the system bars swiped in, only ~285px are left.
+  static const _maxHeight = 300.0;
+  double _height = _maxHeight;
   static const _knobHeight = 36.0;
 
   static const _forwardFraction = 0.8;
@@ -978,11 +1033,13 @@ class _ThrottleLeverState extends State<_ThrottleLever>
     super.didUpdateWidget(oldWidget);
     final synced = widget.synced;
     final now = DateTime.now();
+    // Against the last reading that counted as a move: a slow slew (the
+    // 737 MAX's) changes less than the threshold per reading.
     if (synced != null &&
         (_lastSynced == null || (synced - _lastSynced!).abs() > 0.005)) {
       _syncedMovedAt = now;
+      _lastSynced = synced;
     }
-    _lastSynced = synced;
     if (_awaitingSim) {
       final quietSince = _syncedMovedAt.isAfter(_lastLocalCommandAt)
           ? _syncedMovedAt
@@ -1039,7 +1096,13 @@ class _ThrottleLeverState extends State<_ThrottleLever>
   ];
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) =>
+      LayoutBuilder(builder: (context, constraints) {
+        _height = math.min(_maxHeight, constraints.maxHeight);
+        return _buildLever(context);
+      });
+
+  Widget _buildLever(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     return GestureDetector(
       onVerticalDragStart: _onDragStart,
@@ -1126,6 +1189,9 @@ class _ThrottleLeverState extends State<_ThrottleLever>
 /// one INCR/DECR tap per detent crossed.
 ///
 /// [synced] is the sim's flap handle index, mirrored while not dragging.
+/// Detents are the indices the handle actually stops at, learned as it moves:
+/// FLAPS NUM HANDLE POSITIONS can overcount (the FBW A32NX reports 0..5, but
+/// one FLAPS_INCR from 0 lands on 2).
 class _FlapLever extends StatefulWidget {
   const _FlapLever(
       {required this.onStep, required this.synced, required this.max});
@@ -1154,7 +1220,40 @@ class _FlapLeverState extends State<_FlapLever> {
 
   int get _max => widget.max ?? 0;
 
-  double _fractionFor(int index) => _max == 0 ? 0 : index / _max;
+  final _unreachable = <int>{};
+  // The sim index a single tap left from; learning needs exactly one tap.
+  int? _singleStepFrom;
+
+  List<int> get _detents => [
+        for (var i = 0; i <= _max; i++)
+          if (!_unreachable.contains(i)) i
+      ];
+
+  int _ordinalOf(int index) => _detents.where((d) => d < index).length;
+
+  double _fractionFor(int index) {
+    final n = _detents.length - 1;
+    return n <= 0 ? 0 : _ordinalOf(index) / n;
+  }
+
+  @override
+  void didUpdateWidget(covariant _FlapLever oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // ponytail: max is the only aircraft-change signal; two aircraft with the
+    // same max share learned detents until the handle visits them.
+    if (widget.max != oldWidget.max) {
+      _unreachable.clear();
+      _singleStepFrom = null;
+    }
+    final synced = widget.synced;
+    if (synced == null || synced == oldWidget.synced) return;
+    _unreachable.remove(synced);
+    final from = _singleStepFrom;
+    _singleStepFrom = null;
+    if (from != null && (synced - from).abs() == 2) {
+      _unreachable.add((synced + from) ~/ 2);
+    }
+  }
 
   // Use this, not widget.synced, for drag math: a second drag inside the
   // grace window would otherwise diff against the stale value and double-send.
@@ -1177,11 +1276,14 @@ class _FlapLeverState extends State<_FlapLever> {
   }
 
   void _onDragEnd(DragEndDetails details) {
-    if (_max > 0) {
-      final target = (_dragFraction * _max).round().clamp(0, _max);
-      final steps = target - _currentDetent();
+    final detents = _detents;
+    final n = detents.length - 1;
+    if (n > 0) {
+      final target = (_dragFraction * n).round().clamp(0, n);
+      final steps = target - _ordinalOf(_currentDetent());
       if (steps != 0) widget.onStep(steps);
-      _pendingDetent = target;
+      _singleStepFrom = steps.abs() == 1 ? widget.synced : null;
+      _pendingDetent = detents[target];
       _lastLocalCommandAt = DateTime.now();
     }
     setState(() => _dragging = false);
@@ -1212,7 +1314,9 @@ class _FlapLeverState extends State<_FlapLever> {
             Positioned(
               bottom: 4,
               child: Text(
-                widget.max == null ? '--/--' : '$displayIndex/${widget.max}',
+                widget.max == null
+                    ? '--/--'
+                    : '${_ordinalOf(displayIndex)}/${_detents.length - 1}',
                 style: const TextStyle(fontSize: 10),
               ),
             ),
@@ -1451,16 +1555,17 @@ class _BigButton extends StatelessWidget {
   }
 }
 
-/// Speedbrake lever with detents 0..2. Crossing a detent sends one
-/// SPOILERS_INC/DEC tap.
+/// Speedbrake lever, 0 (retracted) .. 1 (full), sent as an axis: some
+/// aircraft (FBW A32NX) ignore the SPOILERS_INC/DEC step events.
 ///
-/// [synced] is SPOILERS HANDLE POSITION (0..1); the knob sits at the nearest
-/// detent while not dragging.
+/// The knob is the command and never moves on its own, like a hardware
+/// lever. [synced] (SPOILERS HANDLE POSITION, 0..1) is drawn as a tick beside
+/// it instead: following it made a reversed binding or a slewing handle drag
+/// the knob around, while a tick still shows the sim disagreeing.
 class _SpeedbrakeLever extends StatefulWidget {
-  const _SpeedbrakeLever({required this.onStep, this.synced});
+  const _SpeedbrakeLever({required this.onChanged, this.synced});
 
-  /// Positive = SPOILERS_INC taps, negative = SPOILERS_DEC taps.
-  final ValueChanged<int> onStep;
+  final ValueChanged<double> onChanged;
   final double? synced;
 
   @override
@@ -1468,53 +1573,32 @@ class _SpeedbrakeLever extends StatefulWidget {
 }
 
 class _SpeedbrakeLeverState extends State<_SpeedbrakeLever> {
-  static const _detentMax = 2;
   static const _height = 160.0;
   static const _knobHeight = 32.0;
 
-  double _dragValue = 0; // fractional position while dragging, 0.._detentMax
-  int _detent = 0;
-  bool _dragging = false;
+  // A release below this retracts fully; a sliver of speedbrake is never wanted.
+  static const _retractSnapBand = 0.03;
 
-  @override
-  void didUpdateWidget(covariant _SpeedbrakeLever oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    final synced = widget.synced;
-    if (_dragging || synced == null) return;
-    final detent = (synced * _detentMax).round().clamp(0, _detentMax);
-    if (detent != _detent) {
-      _detent = detent;
-      _dragValue = detent.toDouble();
-    }
-  }
+  double _value = 0;
 
-  void _onDragStart(DragStartDetails details) {
-    _dragging = true;
-    _dragValue = _detent.toDouble();
+  void _command(double value) {
+    setState(() => _value = value);
+    widget.onChanged(value);
   }
 
   void _onDragUpdate(DragUpdateDetails details) {
-    setState(() {
-      _dragValue = (_dragValue - details.delta.dy / (_height / _detentMax))
-          .clamp(0.0, _detentMax.toDouble());
-    });
-    final newDetent = _dragValue.round();
-    if (newDetent != _detent) {
-      widget.onStep(newDetent - _detent);
-      _detent = newDetent;
-    }
+    _command((_value - details.delta.dy / _height).clamp(0.0, 1.0));
   }
 
   void _onDragEnd(DragEndDetails details) {
-    _dragging = false;
-    setState(() => _dragValue = _detent.toDouble());
+    if (_value < _retractSnapBand) _command(0);
   }
 
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final synced = widget.synced;
     return GestureDetector(
-      onVerticalDragStart: _onDragStart,
       onVerticalDragUpdate: _onDragUpdate,
       onVerticalDragEnd: _onDragEnd,
       child: Container(
@@ -1536,14 +1620,34 @@ class _SpeedbrakeLeverState extends State<_SpeedbrakeLever> {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Text('2', style: TextStyle(fontSize: 10)),
                   Text('1', style: TextStyle(fontSize: 10)),
+                  Text('½', style: TextStyle(fontSize: 10)),
                   Text('0', style: TextStyle(fontSize: 10)),
                 ],
               ),
             ),
+            if (synced != null)
+              Align(
+                alignment: Alignment(-1, 1 - synced.clamp(0.0, 1.0) * 2),
+                // Knob-height box so the tick's travel matches the knob's.
+                child: SizedBox(
+                  key: const Key('speedbrakeSimTick'),
+                  width: 8,
+                  height: _knobHeight,
+                  child: Center(
+                    child: Container(
+                      width: 6,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: scheme.tertiary,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
             Align(
-              alignment: Alignment(0, 1 - (_dragValue / _detentMax) * 2),
+              alignment: Alignment(0, 1 - _value * 2),
               child: Container(
                 width: 40,
                 height: _knobHeight,

@@ -4,8 +4,10 @@ package telemetry
 
 import (
 	"context"
+	"log/slog"
 	"time"
 
+	"mhotas/internal/config"
 	"mhotas/internal/control"
 	"mhotas/internal/simlink"
 	"mhotas/pkg/protocol"
@@ -19,15 +21,17 @@ const keepaliveInterval = time.Second
 
 // Source pushes live aircraft state to a Sink whenever it changes.
 type Source struct {
-	client *simlink.Client
-	syncer control.ThrottleSyncer
+	client   *simlink.Client
+	syncer   control.ThrottleSyncer
+	profiles []config.AircraftProfile
+	log      *slog.Logger
 }
 
 // NewSource reads from an already-connected client. syncer, if non-nil, is
 // fed every reading so a backend that holds its last value (vJoy) can follow
-// the sim's throttle.
-func NewSource(client *simlink.Client, syncer control.ThrottleSyncer) (*Source, error) {
-	return &Source{client: client, syncer: syncer}, nil
+// the sim's throttle. profiles replace stock simvars for matching aircraft.
+func NewSource(client *simlink.Client, syncer control.ThrottleSyncer, profiles []config.AircraftProfile, log *slog.Logger) (*Source, error) {
+	return &Source{client: client, syncer: syncer, profiles: profiles, log: log}, nil
 }
 
 // Run sends telemetry to sink until ctx is canceled.
@@ -38,6 +42,8 @@ func (s *Source) Run(ctx context.Context, sink Sink) error {
 	var last protocol.Telemetry
 	var lastSent time.Time
 	have := false
+	var title string
+	var over overrides
 
 	for {
 		select {
@@ -47,6 +53,17 @@ func (s *Source) Run(ctx context.Context, sink Sink) error {
 			as, ok := s.client.LatestState()
 			if !ok {
 				continue
+			}
+			if t := as.TitleString(); t != title {
+				title = t
+				p := matchProfile(s.profiles, title)
+				over = newOverrides(p)
+				s.client.WatchExtra(over.names, over.units)
+				profile := "stock simvars"
+				if p != nil {
+					profile = p.TitleContains
+				}
+				s.log.Info("aircraft", "title", title, "profile", profile)
 			}
 			t := toTelemetry(rawState{
 				FlapHandleIndex:        as.FlapHandleIndex,
@@ -67,6 +84,7 @@ func (s *Source) Run(ctx context.Context, sink Sink) error {
 				MachHold:               as.MachHold,
 				Paused:                 s.client.Paused(),
 			})
+			over.apply(&t, s.client.LatestExtra())
 			if s.syncer != nil {
 				s.syncer.SyncThrottle(float64(t.ThrottlePercent), t.AutothrottleActive)
 			}

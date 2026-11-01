@@ -111,6 +111,8 @@ func (s *Server) axisConfig(id control.AxisID) config.AxisConfig {
 		return s.cfg.Throttle
 	case control.AxisRudder:
 		return s.cfg.Rudder
+	case control.AxisSpeedbrake:
+		return s.cfg.Speedbrake
 	default:
 		return config.AxisConfig{}
 	}
@@ -144,6 +146,10 @@ func (s *Server) setAxisConfig(axis protocol.ConfigAxis, ac config.AxisConfig) (
 		ac.Failsafe = s.cfg.Rudder.Failsafe
 		s.cfg.Rudder = ac
 		return control.AxisRudder, true
+	case protocol.ConfigAxisSpeedbrake:
+		ac.Failsafe = s.cfg.Speedbrake.Failsafe
+		s.cfg.Speedbrake = ac
+		return control.AxisSpeedbrake, true
 	default:
 		return 0, false
 	}
@@ -277,8 +283,19 @@ func (s *Server) handleAxis(addr *net.UDPAddr, data []byte) {
 
 	s.applyAxis(control.AxisPitch, float64(axis.Pitch), s.axisConfig(control.AxisPitch))
 	s.applyAxis(control.AxisRoll, float64(axis.Roll), s.axisConfig(control.AxisRoll))
-	s.applyAxis(control.AxisThrottle, float64(axis.Throttle), s.axisConfig(control.AxisThrottle))
+	// NaN: the pilot hasn't moved it since connecting; leave the sim's lever.
+	if !math.IsNaN(float64(axis.Throttle)) {
+		s.applyAxis(control.AxisThrottle, float64(axis.Throttle), s.axisConfig(control.AxisThrottle))
+	}
 	s.applyAxis(control.AxisRudder, float64(axis.Rudder), s.axisConfig(control.AxisRudder))
+	if !math.IsNaN(float64(axis.Speedbrake)) {
+		// Only invert applies: a lever position, held like throttle.
+		v := clamp01(float64(axis.Speedbrake))
+		if s.axisConfig(control.AxisSpeedbrake).Curve.Invert {
+			v = 1 - v
+		}
+		s.applyAxis(control.AxisSpeedbrake, v, config.AxisConfig{})
+	}
 }
 
 func (s *Server) applyAxis(id control.AxisID, raw float64, ac config.AxisConfig) {
@@ -457,10 +474,11 @@ func (s *Server) SendConfig() error {
 	}
 	cfg := s.currentConfig()
 	pkt := protocol.EncodeConfig(s.nextSeq(), protocol.Config{
-		Pitch:    toWire(cfg.Pitch),
-		Roll:     toWire(cfg.Roll),
-		Throttle: toWire(cfg.Throttle),
-		Rudder:   toWire(cfg.Rudder),
+		Pitch:      toWire(cfg.Pitch),
+		Roll:       toWire(cfg.Roll),
+		Throttle:   toWire(cfg.Throttle),
+		Rudder:     toWire(cfg.Rudder),
+		Speedbrake: toWire(cfg.Speedbrake),
 	})
 	_, err := s.conn.WriteToUDP(pkt, addr)
 	return err

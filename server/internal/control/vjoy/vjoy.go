@@ -20,14 +20,15 @@ import (
 const deviceID = 1
 
 var axisUsage = map[control.AxisID]uint32{
-	control.AxisPitch:    vjoylink.AxisY,
-	control.AxisRoll:     vjoylink.AxisX,
-	control.AxisThrottle: vjoylink.AxisZ,
-	control.AxisRudder:   vjoylink.AxisRZ,
+	control.AxisPitch:      vjoylink.AxisY,
+	control.AxisRoll:       vjoylink.AxisX,
+	control.AxisThrottle:   vjoylink.AxisZ,
+	control.AxisRudder:     vjoylink.AxisRZ,
+	control.AxisSpeedbrake: vjoylink.AxisRX,
 }
 
 var axisLetter = map[uint32]string{
-	vjoylink.AxisX: "X", vjoylink.AxisY: "Y", vjoylink.AxisZ: "Z", vjoylink.AxisRZ: "Rz",
+	vjoylink.AxisX: "X", vjoylink.AxisY: "Y", vjoylink.AxisZ: "Z", vjoylink.AxisRX: "Rx", vjoylink.AxisRZ: "Rz",
 }
 
 // Sim is the SimConnect connection kept open for telemetry; Backend owns closing it.
@@ -44,6 +45,8 @@ type axis struct {
 type Backend struct {
 	sim  Sim
 	axes map[control.AxisID]axis
+
+	speedbrakeRaw int32 // last written; -1 before the first write
 
 	throttleMu  sync.Mutex // serializes throttle writes, resyncs and setting changes
 	sync        throttleSync
@@ -64,7 +67,7 @@ func New(log *slog.Logger, sim Sim) (*Backend, error) {
 	// A crashed session may have left a button held.
 	vjoylink.ReleaseButtons(deviceID)
 
-	b := &Backend{sim: sim, axes: map[control.AxisID]axis{}}
+	b := &Backend{sim: sim, axes: map[control.AxisID]axis{}, speedbrakeRaw: -1}
 	var missing []string
 	for id, usage := range axisUsage {
 		if max, ok := vjoylink.AxisMax(deviceID, usage); ok {
@@ -83,6 +86,9 @@ func New(log *slog.Logger, sim Sim) (*Backend, error) {
 			deviceID, strings.Join(missing, ", "))
 	}
 	for id := control.ButtonGear; id <= control.ButtonThrottleReverseArm; id++ {
+		if _, used := control.ButtonByName(id.String()); !used {
+			continue
+		}
 		log.Info("vjoy binding", "button", int(id), "control", id.String())
 	}
 	return b, nil
@@ -92,13 +98,30 @@ func (b *Backend) Name() string { return "vjoy" }
 
 func (b *Backend) SetAxis(id control.AxisID, value float64) error {
 	a := b.axes[id]
-	if id != control.AxisThrottle {
+	switch id {
+	case control.AxisThrottle:
+		b.throttleMu.Lock()
+		defer b.throttleMu.Unlock()
+		b.sync.wrote(time.Now())
+		return b.writeThrottle(value)
+	case control.AxisSpeedbrake:
+		// Retracted = axis minimum, like a hardware speedbrake lever.
+		raw := toRaw(value*2-1, a.max)
+		// MSFS only acts on an axis change, so re-sending the value the axis
+		// already holds (first command after a reconnect, after the sim moved
+		// the handle itself) did nothing; step off it first, for long enough
+		// that MSFS's once-a-frame poll sees it. -1: unknown since startup.
+		if raw == b.speedbrakeRaw || b.speedbrakeRaw == -1 {
+			if err := vjoylink.SetAxis(deviceID, a.usage, raw^1); err != nil {
+				return err
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		b.speedbrakeRaw = raw
+		return vjoylink.SetAxis(deviceID, a.usage, raw)
+	default:
 		return vjoylink.SetAxis(deviceID, a.usage, toRaw(value, a.max))
 	}
-	b.throttleMu.Lock()
-	defer b.throttleMu.Unlock()
-	b.sync.wrote(time.Now())
-	return b.writeThrottle(value)
 }
 
 // SyncThrottle implements control.ThrottleSyncer.
