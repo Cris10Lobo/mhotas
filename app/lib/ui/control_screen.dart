@@ -312,34 +312,83 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
       body: SafeArea(
         child: Stack(
           children: [
-            Column(
+            // Matches the README banner: trim/AP and rudder on the left,
+            // attitude in the middle, then gear/speedbrake/flaps over the
+            // brakes, and the throttle at the right edge.
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Expanded(
+                Padding(
+                  padding: const EdgeInsets.only(left: 16, top: 40),
                   child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
-                      Expanded(
-                        child: Align(
-                          // Center drifted down into the rudder control.
-                          alignment: Alignment.topCenter,
-                          child: _Movable(
-                            id: 'attitude',
-                            child: manualJoystick
-                                ? _ManualJoystick(
-                                    onChanged: (v) =>
-                                        setState(() => _joystick = v))
-                                : _TiltIndicator(
-                                    attitude: _attitude,
-                                    paused: gyroPaused,
-                                    onPausedChanged: (v) => ref
-                                        .read(gyroPausedProvider.notifier)
-                                        .state = v,
-                                  ),
+                      _Movable(
+                        id: 'trim',
+                        child: _ControlLabel(
+                          label: 'TRIM',
+                          child: _TrimRocker(
+                            trim: telemetry?.elevatorTrim,
+                            onUp: () => _tapButton(ButtonIds.trimUp),
+                            onDown: () => _tapButton(ButtonIds.trimDown),
                           ),
                         ),
                       ),
-                      Padding(
-                        padding: const EdgeInsets.only(right: 8),
-                        child: _Movable(
+                      const SizedBox(width: 16),
+                      _Movable(
+                        id: 'autopilotDisconnect',
+                        child: _ControlLabel(
+                          label: 'AP DISC',
+                          child: _AutopilotDisconnectButton(
+                            engaged: telemetry?.autopilotMaster ?? false,
+                            onTap: () =>
+                                _tapButton(ButtonIds.autopilotDisconnect),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: Align(
+                    // Center drifted down into the rudder control.
+                    alignment: Alignment.topCenter,
+                    child: Padding(
+                      padding: const EdgeInsets.only(top: 24),
+                      child: _Movable(
+                        id: 'attitude',
+                        child: manualJoystick
+                            ? _ManualJoystick(
+                                onChanged: (v) => setState(() => _joystick = v))
+                            : _TiltIndicator(
+                                attitude: _attitude,
+                                paused: gyroPaused,
+                                onPausedChanged: (v) => ref
+                                    .read(gyroPausedProvider.notifier)
+                                    .state = v,
+                              ),
+                      ),
+                    ),
+                  ),
+                ),
+                Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        _Movable(
+                          id: 'gear',
+                          child: _ControlLabel(
+                            label: 'GEAR',
+                            child: _GearToggle(
+                              position: telemetry?.gearPosition,
+                              onTap: () => _tapButton(ButtonIds.gear),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        _Movable(
                           id: 'speedbrake',
                           child: _ControlLabel(
                             label: 'SPEEDBRAKE',
@@ -363,10 +412,8 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
                             ),
                           ),
                         ),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.only(right: 8),
-                        child: _Movable(
+                        const SizedBox(width: 8),
+                        _Movable(
                           id: 'flapLever',
                           child: _FlapLever(
                             onStep: _stepFlaps,
@@ -374,10 +421,23 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
                             max: telemetry?.flapHandleIndexMax,
                           ),
                         ),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.only(right: 8),
-                        child: _Movable(
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Row(
+                      children: [
+                        _Movable(
+                          id: 'parkingBrake',
+                          child: _ControlLabel(
+                            label: 'PARK BRAKE',
+                            child: _ParkingBrakeButton(
+                              active: telemetry?.parkingBrakeSet ?? false,
+                              onTap: () => _tapButton(ButtonIds.parkingBrake),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 16),
+                        _Movable(
                           id: 'toeBrake',
                           child: _ControlLabel(
                             label: 'TOE BRAKE',
@@ -388,86 +448,36 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
                             ),
                           ),
                         ),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.only(right: 8),
-                        child: _Movable(
-                          id: 'parkingBrake',
-                          child: _ControlLabel(
-                            label: 'PARK BRAKE',
-                            child: _ParkingBrakeButton(
-                              active: telemetry?.parkingBrakeSet ?? false,
-                              onTap: () => _tapButton(ButtonIds.parkingBrake),
+                      ],
+                    ),
+                  ],
+                ),
+                const SizedBox(width: 12),
+                Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: _Movable(
+                    id: 'throttle',
+                    child: _ControlLabel(
+                      label: 'THROTTLE',
+                      child: nudgeThrottle
+                          ? _ThrottleNudgeControl(
+                              throttlePercent: telemetry?.throttlePercent,
+                              autothrottle:
+                                  telemetry?.autothrottleActive ?? false,
+                              onIncr: () => _nudge(ButtonIds.throttleIncr),
+                              onDecr: () => _nudge(ButtonIds.throttleDecr),
+                              onReverseArmChanged: (pressed) => _sendButton(
+                                  ButtonIds.throttleReverseArm, pressed),
+                            )
+                          : _ThrottleLever(
+                              onChanged: (v) => ref
+                                  .read(sliderAxisProvider.notifier)
+                                  .setThrottle(v),
+                              synced: telemetry?.throttlePercent,
+                              autothrottle:
+                                  telemetry?.autothrottleActive ?? false,
                             ),
-                          ),
-                        ),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.only(right: 8),
-                        child: _Movable(
-                          id: 'gear',
-                          child: _ControlLabel(
-                            label: 'GEAR',
-                            child: _GearToggle(
-                              position: telemetry?.gearPosition,
-                              onTap: () => _tapButton(ButtonIds.gear),
-                            ),
-                          ),
-                        ),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.only(right: 8),
-                        child: _Movable(
-                          id: 'autopilotDisconnect',
-                          child: _ControlLabel(
-                            label: 'AP DISC',
-                            child: _AutopilotDisconnectButton(
-                              engaged: telemetry?.autopilotMaster ?? false,
-                              onTap: () =>
-                                  _tapButton(ButtonIds.autopilotDisconnect),
-                            ),
-                          ),
-                        ),
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.only(right: 8),
-                        child: _Movable(
-                          id: 'trim',
-                          child: _ControlLabel(
-                            label: 'TRIM',
-                            child: _TrimRocker(
-                              trim: telemetry?.elevatorTrim,
-                              onUp: () => _tapButton(ButtonIds.trimUp),
-                              onDown: () => _tapButton(ButtonIds.trimDown),
-                            ),
-                          ),
-                        ),
-                      ),
-                      _Movable(
-                        id: 'throttle',
-                        child: _ControlLabel(
-                          label: 'THROTTLE',
-                          child: nudgeThrottle
-                              ? _ThrottleNudgeControl(
-                                  throttlePercent: telemetry?.throttlePercent,
-                                  autothrottle:
-                                      telemetry?.autothrottleActive ?? false,
-                                  onIncr: () => _nudge(ButtonIds.throttleIncr),
-                                  onDecr: () => _nudge(ButtonIds.throttleDecr),
-                                  onReverseArmChanged: (pressed) => _sendButton(
-                                      ButtonIds.throttleReverseArm, pressed),
-                                )
-                              : _ThrottleLever(
-                                  onChanged: (v) => ref
-                                      .read(sliderAxisProvider.notifier)
-                                      .setThrottle(v),
-                                  synced: telemetry?.throttlePercent,
-                                  autothrottle:
-                                      telemetry?.autothrottleActive ?? false,
-                                ),
-                        ),
-                      ),
-                    ],
+                    ),
                   ),
                 ),
               ],
