@@ -42,8 +42,8 @@ const (
 	ButtonFlapIncr
 	ButtonFlapDecr
 	ButtonToeBrake
-	ButtonSpoilerIncr
-	ButtonSpoilerDecr
+	_ // 7, 8: spoiler INC/DEC until the speedbrake became an axis
+	_
 	ButtonSpoilerArm
 	ButtonAutopilotDisconnect
 	ButtonTrimUp
@@ -68,8 +68,6 @@ var buttonNames = map[string]ButtonID{
 	"flap_incr":            ButtonFlapIncr,
 	"flap_decr":            ButtonFlapDecr,
 	"toe_brake":            ButtonToeBrake,
-	"spoiler_incr":         ButtonSpoilerIncr,
-	"spoiler_decr":         ButtonSpoilerDecr,
 	"spoiler_arm":          ButtonSpoilerArm,
 	"autopilot_disconnect": ButtonAutopilotDisconnect,
 	"trim_up":              ButtonTrimUp,

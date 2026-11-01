@@ -41,8 +41,6 @@ func defaultMappings() map[string]config.ControlMapping {
 		"flap_incr":            {Driver: driverKEvent, Event: "FLAPS_INCR"},
 		"flap_decr":            {Driver: driverKEvent, Event: "FLAPS_DECR"},
 		"toe_brake":            {Driver: driverToeBrake},
-		"spoiler_incr":         {Driver: driverKEvent, Event: "SPOILERS_INC"},
-		"spoiler_decr":         {Driver: driverKEvent, Event: "SPOILERS_DEC"},
 		"spoiler_arm":          {Driver: driverSpoilerArm},
 		"autopilot_disconnect": {Driver: driverKEvent, Event: "AUTOPILOT_OFF"},
 		"trim_up":              {Driver: driverKEvent, Event: "ELEV_TRIM_UP"},

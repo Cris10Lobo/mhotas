@@ -86,6 +86,9 @@ func New(log *slog.Logger, sim Sim) (*Backend, error) {
 			deviceID, strings.Join(missing, ", "))
 	}
 	for id := control.ButtonGear; id <= control.ButtonThrottleReverseArm; id++ {
+		if _, used := control.ButtonByName(id.String()); !used {
+			continue
+		}
 		log.Info("vjoy binding", "button", int(id), "control", id.String())
 	}
 	return b, nil
