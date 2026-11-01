@@ -83,6 +83,35 @@ drives the real flying screen and checks each command through TELEMETRY; `survey
 every control and logs, for reading alongside `simprobe -watch`. Both take
 `--dart-define=MHOTAS_SERVER=<pc-ip>:9750` and need the aircraft on the ground, parking brake set.
 
+### Running the live-sim tests
+
+When asked to test against the sim, run the whole flow yourself; only the setup in step 1 needs the tester.
+
+1. **Prompt the tester before running anything**, in one message: load the aircraft under test on the
+   ground, parking brake set, sim unpaused; phone on the same LAN with wireless debugging on (give the
+   current `ip:port` if `adb connect` fails, since the port changes); vJoy bindings in place (Rx →
+   SPOILERS AXIS, buttons as in the server's `vjoy binding` startup lines). For an aircraft without
+   spoilers (e.g. Cessna 172), say the spoiler steps will be skipped. Wait for their go-ahead.
+2. **Check the PC side** from WSL: `powershell.exe -NoProfile -Command "Get-Process | ? { $_.ProcessName
+   -match 'mhotas|FlightSim' }"`. MSFS must be running; if `mhotas-server` isn't, start it yourself.
+3. **Start the server** in the background from the repo root, logging to the scratchpad:
+   `make server INPUT=vjoy > <scratchpad>/server.log 2>&1` (it cross-builds and runs the Windows exe, so
+   it shares the PC's network). Wait for `msg=aircraft` in the log and confirm the title and profile
+   match the aircraft under test. To restart, `Stop-Process -Name mhotas-server -Force` first.
+4. **Connect the phone**: `adb connect <phone-ip>:<port>`, then `adb devices`.
+5. **Run**, from `app/`:
+   `flutter test integration_test/sim_test.dart -d <phone-ip>:<port>
+   --dart-define=MHOTAS_SERVER=<pc-ip>:9750 [--dart-define=MHOTAS_NO_SPOILERS=true]`, output to a log.
+   Each check prints `SIM OK <step>`; a failure prints `sim never reported <step>` with the last
+   telemetry.
+6. **On failure, read the server log before suspecting the aircraft.** `TimeoutException` at setup
+   means no HELLO_ACK (server down or unreachable). A step that never moved: check whether the phone's
+   packets reached the server at all (temporarily log in `transport`'s button handler if needed, and
+   revert it) and the `sim` lines around that time. A test that pumps no frame between telemetry and
+   a drag acts on stale widget state, so that's a test bug, not an app bug.
+7. **Report** a pass/fail table per step, what was skipped and why, and anything odd in the server log.
+   Leave the server running and tell the tester it is.
+
 ### App (`app/`)
 
 `android/` and `ios/` are generated (via `flutter create`) and committed, so a fresh clone builds as-is,

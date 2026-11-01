@@ -3,6 +3,7 @@
 //
 //   flutter test integration_test -d <device> \
 //     --dart-define=MHOTAS_SERVER=192.168.0.101:9750
+//     [--dart-define=MHOTAS_NO_SPOILERS=true]
 //
 // Needs an aircraft loaded on the ground and unpaused; moves the speedbrake,
 // flaps and parking brake, and puts flaps and parking brake back.
@@ -18,6 +19,8 @@ import 'package:mhotas/state/connection.dart';
 import 'package:mhotas/ui/control_screen.dart';
 
 const _server = String.fromEnvironment('MHOTAS_SERVER');
+// For aircraft without spoilers (Cessna 172): skips ARM and speedbrake.
+const _noSpoilers = bool.fromEnvironment('MHOTAS_NO_SPOILERS');
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
@@ -29,6 +32,8 @@ void main() {
   Future<proto.Telemetry> waitSim(WidgetTester tester, String what,
       bool Function(proto.Telemetry) ok) async {
     final deadline = DateTime.now().add(const Duration(seconds: 5));
+    // At least one frame, so widgets reflect [sim] before the caller acts.
+    await tester.pump();
     while (sim == null || !ok(sim!)) {
       if (DateTime.now().isAfter(deadline)) {
         fail('sim never reported $what; last telemetry: ${_describe(sim)}');
@@ -67,29 +72,31 @@ void main() {
     final start = await waitSim(tester, 'first telemetry', (_) => true);
     expect(start.paused, isFalse, reason: 'unpause the sim first');
 
-    // Spoiler ARM first: on the A32NX arming retracts a deployed handle while
-    // the vJoy axis stays put, so the speedbrake step below re-sends the
-    // value vJoy already holds (which MSFS used to ignore).
-    final arm = find.descendant(
-        of: find.byKey(const Key('speedbrake')), matching: find.text('ARM'));
-    await tester.tap(arm);
-    await waitSim(tester, 'spoilers ARM toggled',
-        (t) => t.spoilersArmed != start.spoilersArmed);
-    await tester.pump(const Duration(milliseconds: 600));
-    await tester.tap(arm);
-    await waitSim(tester, 'spoilers ARM restored',
-        (t) => t.spoilersArmed == start.spoilersArmed);
+    if (!_noSpoilers) {
+      // Spoiler ARM first: on the A32NX arming retracts a deployed handle while
+      // the vJoy axis stays put, so the speedbrake step below re-sends the
+      // value vJoy already holds (which MSFS used to ignore).
+      final arm = find.descendant(
+          of: find.byKey(const Key('speedbrake')), matching: find.text('ARM'));
+      await tester.tap(arm);
+      await waitSim(tester, 'spoilers ARM toggled',
+          (t) => t.spoilersArmed != start.spoilersArmed);
+      await tester.pump(const Duration(milliseconds: 600));
+      await tester.tap(arm);
+      await waitSim(tester, 'spoilers ARM restored',
+          (t) => t.spoilersArmed == start.spoilersArmed);
 
-    // Speedbrake: full, then retracted. The tick (sim) must meet the knob.
-    final speedbrake = find.descendant(
-        of: find.byKey(const Key('speedbrake')),
-        matching: find.byWidgetPredicate(
-            (w) => w.runtimeType.toString() == '_SpeedbrakeLever'));
-    await tester.drag(speedbrake, const Offset(0, -300));
-    await waitSim(tester, 'speedbrake full', (t) => t.spoilersHandle > 0.9);
-    await tester.drag(speedbrake, const Offset(0, 300));
-    await waitSim(
-        tester, 'speedbrake retracted', (t) => t.spoilersHandle < 0.05);
+      // Speedbrake: full, then retracted. The tick (sim) must meet the knob.
+      final speedbrake = find.descendant(
+          of: find.byKey(const Key('speedbrake')),
+          matching: find.byWidgetPredicate(
+              (w) => w.runtimeType.toString() == '_SpeedbrakeLever'));
+      await tester.drag(speedbrake, const Offset(0, -300));
+      await waitSim(tester, 'speedbrake full', (t) => t.spoilersHandle > 0.9);
+      await tester.drag(speedbrake, const Offset(0, 300));
+      await waitSim(
+          tester, 'speedbrake retracted', (t) => t.spoilersHandle < 0.05);
+    }
 
     // Flaps: up, one detent down, back to where they were. On the FBW
     // A32NX the sim index skips 1, which the lever must learn (n/4, not n/5).
