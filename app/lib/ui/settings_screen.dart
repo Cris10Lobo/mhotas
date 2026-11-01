@@ -62,6 +62,16 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     onChanged: (v) =>
                         ref.read(nudgeThrottleProvider.notifier).setEnabled(v),
                   ),
+                  if (nudgeThrottle)
+                    const ListTile(
+                      leading: Icon(Icons.info_outline),
+                      title: Text('vJoy input needs these MSFS bindings'),
+                      subtitle: Text('Button 13: INCREASE THROTTLE\n'
+                          'Button 14: DECREASE THROTTLE\n'
+                          'Button 15: THROTTLE REVERSE THRUST HOLD\n'
+                          "SimConnect input needs none. If + and − don't move "
+                          "the sim's throttle, the flying screen says so."),
+                    ),
                 ]),
                 const _SectionHeader(
                   'Calibration',
@@ -109,6 +119,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     icon: Icons.swap_horiz,
                     axis: proto.ConfigAxis.rudder,
                     calibration: calibration.rudder,
+                  ),
+                  _AxisCard(
+                    label: 'Speedbrake',
+                    icon: Icons.vertical_align_bottom,
+                    axis: proto.ConfigAxis.speedbrake,
+                    calibration: calibration.speedbrake,
                   ),
                 ],
               ],
@@ -240,6 +256,22 @@ class _AxisCardState extends ConsumerState<_AxisCard> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    if (widget.axis == proto.ConfigAxis.speedbrake) {
+      // A lever position: a curve or smoothing would only make it lag.
+      return Card.filled(
+        color: theme.colorScheme.surfaceContainerLow,
+        margin: const EdgeInsets.only(bottom: 8),
+        clipBehavior: Clip.antiAlias,
+        child: SwitchListTile(
+          secondary: Icon(widget.icon),
+          title: const Text('Reverse speedbrake'),
+          subtitle: const Text('Turn on if the sim deploys when the lever is '
+              'retracted. Same as "Reverse axis" on the MSFS binding.'),
+          value: _invert,
+          onChanged: (v) => _toggle(() => _invert = v),
+        ),
+      );
+    }
     return Card.filled(
       color: theme.colorScheme.surfaceContainerLow,
       margin: const EdgeInsets.only(bottom: 8),
