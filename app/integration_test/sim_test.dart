@@ -6,7 +6,8 @@
 //     [--dart-define=MHOTAS_NO_SPOILERS=true]
 //
 // Needs an aircraft loaded on the ground and unpaused; moves the speedbrake,
-// flaps and parking brake, and puts flaps and parking brake back.
+// flaps, throttle and parking brake; leaves the throttle at idle and puts
+// flaps and parking brake back.
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -29,9 +30,10 @@ void main() {
   proto.Telemetry? sim;
 
   // Pumps frames until the sim reports [ok], so the UI keeps up meanwhile.
-  Future<proto.Telemetry> waitSim(WidgetTester tester, String what,
-      bool Function(proto.Telemetry) ok) async {
-    final deadline = DateTime.now().add(const Duration(seconds: 5));
+  Future<proto.Telemetry> waitSim(
+      WidgetTester tester, String what, bool Function(proto.Telemetry) ok,
+      {Duration timeout = const Duration(seconds: 5)}) async {
+    final deadline = DateTime.now().add(timeout);
     // At least one frame, so widgets reflect [sim] before the caller acts.
     await tester.pump();
     while (sim == null || !ok(sim!)) {
@@ -133,6 +135,19 @@ void main() {
       await tester.pump(const Duration(milliseconds: 600));
     }
 
+    // Throttle: some, then idle, where the sim must read ~0. A signed
+    // throttle idle point that doesn't match the aircraft leaves it at ~27%.
+    final throttle = find.byKey(const Key('throttle'));
+    await tester.drag(throttle, const Offset(0, -72));
+    // The 737 MAX slews its lever slowly, idle-ward most of all.
+    await waitSim(tester, 'throttle forward', (t) => t.throttlePercent > 0.1,
+        timeout: const Duration(seconds: 10));
+    await tester.pump(const Duration(milliseconds: 600));
+    await tester.drag(throttle, const Offset(0, 80));
+    await waitSim(tester, 'throttle idle',
+        (t) => t.throttlePercent >= 0 && t.throttlePercent < 0.03,
+        timeout: const Duration(seconds: 10));
+
     // Parking brake: toggle and back.
     final parking = find.byKey(const Key('parkingBrake'));
     await tester.tap(parking);
@@ -154,4 +169,5 @@ String _describe(proto.Telemetry? t) => t == null
     ? 'none'
     : 'flaps=${t.flapHandleIndex}/${t.flapHandleIndexMax} '
         'spoilers=${t.spoilersHandle.toStringAsFixed(2)} '
+        'throttle=${t.throttlePercent.toStringAsFixed(2)} '
         'parkingBrake=${t.parkingBrakeSet} paused=${t.paused}';

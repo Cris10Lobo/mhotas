@@ -1033,11 +1033,13 @@ class _ThrottleLeverState extends State<_ThrottleLever>
     super.didUpdateWidget(oldWidget);
     final synced = widget.synced;
     final now = DateTime.now();
+    // Against the last reading that counted as a move: a slow slew (the
+    // 737 MAX's) changes less than the threshold per reading.
     if (synced != null &&
         (_lastSynced == null || (synced - _lastSynced!).abs() > 0.005)) {
       _syncedMovedAt = now;
+      _lastSynced = synced;
     }
-    _lastSynced = synced;
     if (_awaitingSim) {
       final quietSince = _syncedMovedAt.isAfter(_lastLocalCommandAt)
           ? _syncedMovedAt

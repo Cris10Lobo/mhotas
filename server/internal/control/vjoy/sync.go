@@ -39,10 +39,12 @@ func (s *throttleSync) wrote(now time.Time) {
 // (aircraft disagree on reverse travel, e.g. -20% at full reverse, so
 // writing it back would pull the lever out of reverse).
 func (s *throttleSync) shouldSync(sim float64, autothrottle bool, now time.Time) bool {
+	// Against the last position that counted as a move, not the previous
+	// reading: a slow slew (the 737 MAX's, ~0.03/s) changes less than
+	// settleEps per reading and would look stopped mid-travel.
 	if math.Abs(sim-s.last) > settleEps {
-		s.lastMove = now
+		s.lastMove, s.last = now, sim
 	}
-	s.last = sim
 	stopped := now.Sub(s.lastMove) >= settleTime
 
 	switch {

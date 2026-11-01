@@ -54,6 +54,18 @@ func TestThrottleSync(t *testing.T) {
 	}
 }
 
+func TestThrottleSyncWaitsOutSlowSlew(t *testing.T) {
+	var s throttleSync
+	t0 := time.Unix(1000, 0)
+	s.wrote(t0)
+	// 0 -> 0.15 at 0.03/s in 50ms ticks: under settleEps per reading.
+	for ms := 50; ms <= 5000; ms += 50 {
+		if s.shouldSync(0.03*float64(ms)/1000, false, t0.Add(time.Duration(ms)*time.Millisecond)) {
+			t.Fatalf("resynced mid-slew at %dms", ms)
+		}
+	}
+}
+
 func TestThrottleSyncSkipsReverse(t *testing.T) {
 	var s throttleSync
 	t0 := time.Unix(1000, 0)
