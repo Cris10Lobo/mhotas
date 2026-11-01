@@ -157,7 +157,7 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
       content: Text("The sim's throttle didn't move. In vJoy mode, bind vJoy "
           'button ${up ? 13 : 14} to ${up ? 'INCREASE' : 'DECREASE'} THROTTLE '
-          'in MSFS (see Settings > Nudge throttle).'),
+          'in MSFS (see Settings > Throttle buttons).'),
       duration: const Duration(seconds: 8),
     ));
   }
@@ -374,54 +374,59 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
                 Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        _Movable(
-                          id: 'gear',
-                          child: _ControlLabel(
-                            label: 'GEAR',
-                            child: _GearToggle(
-                              position: telemetry?.gearPosition,
-                              onTap: () => _tapButton(ButtonIds.gear),
+                    Flexible(
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          _Movable(
+                            id: 'gear',
+                            child: _ControlLabel(
+                              label: 'GEAR',
+                              child: _GearToggle(
+                                position: telemetry?.gearPosition,
+                                onTap: () => _tapButton(ButtonIds.gear),
+                              ),
                             ),
                           ),
-                        ),
-                        const SizedBox(width: 8),
-                        _Movable(
-                          id: 'speedbrake',
-                          child: _ControlLabel(
-                            label: 'SPEEDBRAKE',
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                _BigButton(
-                                  label: 'ARM',
-                                  onTap: () => _tapButton(ButtonIds.spoilerArm),
-                                  active: telemetry?.spoilersArmed ?? false,
-                                  compact: true,
-                                ),
-                                const SizedBox(height: 8),
-                                _SpeedbrakeLever(
-                                  onChanged: (v) => ref
-                                      .read(sliderAxisProvider.notifier)
-                                      .setSpeedbrake(v),
-                                  synced: telemetry?.spoilersHandle,
-                                ),
-                              ],
+                          const SizedBox(width: 8),
+                          _Movable(
+                            id: 'speedbrake',
+                            child: _ControlLabel(
+                              label: 'SPEEDBRAKE',
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  _BigButton(
+                                    label: 'ARM',
+                                    onTap: () =>
+                                        _tapButton(ButtonIds.spoilerArm),
+                                    active: telemetry?.spoilersArmed ?? false,
+                                    compact: true,
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Flexible(
+                                      child: _SpeedbrakeLever(
+                                    onChanged: (v) => ref
+                                        .read(sliderAxisProvider.notifier)
+                                        .setSpeedbrake(v),
+                                    synced: telemetry?.spoilersHandle,
+                                  )),
+                                ],
+                              ),
                             ),
                           ),
-                        ),
-                        const SizedBox(width: 8),
-                        _Movable(
-                          id: 'flapLever',
-                          child: _FlapLever(
-                            onStep: _stepFlaps,
-                            synced: telemetry?.flapHandleIndex,
-                            max: telemetry?.flapHandleIndexMax,
+                          const SizedBox(width: 8),
+                          _Movable(
+                            id: 'flapLever',
+                            child: _FlapLever(
+                              onStep: _stepFlaps,
+                              synced: telemetry?.flapHandleIndex,
+                              max: telemetry?.flapHandleIndexMax,
+                            ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                     const SizedBox(height: 4),
                     Row(
@@ -1216,7 +1221,9 @@ class _FlapLever extends StatefulWidget {
 }
 
 class _FlapLeverState extends State<_FlapLever> {
-  static const _height = 160.0;
+  // Shrinks to fit, like the throttle, when the system bars are showing.
+  static const _maxHeight = 160.0;
+  double _height = _maxHeight;
   static const _knobHeight = 32.0;
 
   bool _dragging = false;
@@ -1300,7 +1307,13 @@ class _FlapLeverState extends State<_FlapLever> {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) =>
+      LayoutBuilder(builder: (context, constraints) {
+        _height = math.min(_maxHeight, constraints.maxHeight);
+        return _buildLever(context);
+      });
+
+  Widget _buildLever(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final displayIndex = _currentDetent();
     final fraction = _dragging ? _dragFraction : _fractionFor(displayIndex);
@@ -1583,7 +1596,9 @@ class _SpeedbrakeLever extends StatefulWidget {
 }
 
 class _SpeedbrakeLeverState extends State<_SpeedbrakeLever> {
-  static const _height = 160.0;
+  // Shrinks to fit, like the throttle, when the system bars are showing.
+  static const _maxHeight = 160.0;
+  double _height = _maxHeight;
   static const _knobHeight = 32.0;
 
   // A release below this retracts fully; a sliver of speedbrake is never wanted.
@@ -1605,7 +1620,13 @@ class _SpeedbrakeLeverState extends State<_SpeedbrakeLever> {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) =>
+      LayoutBuilder(builder: (context, constraints) {
+        _height = math.min(_maxHeight, constraints.maxHeight);
+        return _buildLever(context);
+      });
+
+  Widget _buildLever(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final synced = widget.synced;
     return GestureDetector(

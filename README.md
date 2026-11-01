@@ -54,7 +54,7 @@ Use vJoy, a virtual joystick you bind in MSFS's controls menu like any other dev
 | Tilt the phone | Pitch and roll. The attitude display in the middle shows what the sim gets. |
 | Pause button on the attitude display | Holds pitch and roll at neutral so you can put the phone down. Everything else keeps working. |
 | Calibrate | Sets how you're holding the phone right now as neutral. |
-| Throttle (THR) | Drag up for power. Below the idle line is reverse thrust, if signed reverse thrust is on. Shows A/T while autothrottle is flying. |
+| Throttle (THR) | Drag up for power. Below the idle line is reverse thrust, if "Reverse thrust on the axis" is on. Shows A/T while autothrottle is flying. |
 | Rudder | Drag left or right. Springs back to center when you let go. |
 | Trim ▲ ▼ | Elevator trim. Hold to keep trimming. The percentage is the sim's trim position. |
 | AP (AP DISC) | Disconnects the autopilot. Lit while the autopilot is on. |
@@ -143,7 +143,7 @@ when it starts.
 |------|---------|--------------|
 | Y | pitch | Elevator axis |
 | X | roll | Ailerons axis |
-| Z | throttle | Throttle axis (`-100 to 100%` if signed reverse thrust is on, otherwise `0 to 100%`) |
+| Z | throttle | Throttle axis (`-100 to 100%` if "Reverse thrust on the axis" is on, otherwise `0 to 100%`) |
 | Rz | rudder | Rudder axis |
 | Rx | speedbrake | Spoilers axis |
 | 1 | gear | Toggle landing gear |
@@ -160,13 +160,13 @@ when it starts.
 
 If pitch or roll goes the wrong way, tick "reverse axis" on that binding in MSFS. For the throttle,
 use Settings, Throttle, Invert in the app instead. If the speedbrake deploys when the lever is retracted,
-turn on Settings, Speedbrake, Reverse speedbrake. Buttons 13 to 15 are only needed for nudge throttle.
+turn on Settings, Speedbrake, Reverse speedbrake. Buttons 13 to 15 are only needed for the throttle buttons.
 
 You only have to do this once. MSFS saves the bindings in a profile.
 
 ## Settings worth knowing
 
-- Signed reverse thrust (Settings, Throttle): use this for aircraft that have reverse below idle on the
+- Reverse thrust on the axis (Settings, Throttle): use this for aircraft that have reverse below idle on the
   same lever. You then also set where idle sits. On airliners with an idle detent it's well below the
   middle of the axis, so adjust it until the phone's idle puts the sim's lever exactly at idle.
 - Autothrottle: while it's on, the throttle lever shows an A/T badge and the server stops moving the
