@@ -291,9 +291,9 @@ class _AxisCardState extends ConsumerState<_AxisCard> {
               contentPadding: EdgeInsets.zero,
               title: const Text('Reverse thrust on the axis'),
               subtitle: const Text(
-                  'For aircraft that read reverse from the throttle axis '
-                  '(FBW A32NX). Leave off for most stock aircraft: they '
-                  'would sit above idle.'),
+                  'The bottom of the lever becomes reverse thrust. Only for '
+                  'aircraft with reverse on the throttle axis; on others, '
+                  'idle would sit above zero thrust.'),
               value: _signedThrottle,
               onChanged: (v) => _toggle(() => _signedThrottle = v),
             ),
