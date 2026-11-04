@@ -1010,8 +1010,13 @@ class _ThrottleLeverState extends State<_ThrottleLever>
   // After a local command the phone owns the throttle: `synced` is ignored
   // until the sim's lever stops moving. Many aircraft slew the lever, so
   // `synced` is mid-travel for a while and following it would drag the knob
-  // backwards (e.g. a reverse-zone release back into reverse).
+  // backwards (e.g. a reverse-zone release back into reverse). Where it stops
+  // becomes the baseline and only a later move away from it is followed, as
+  // the server's vJoy resync does: the sim's reading isn't the phone's value
+  // on every aircraft (the A32NX's detents put phone 0.46 at sim 0.68).
   bool _awaitingSim = false;
+  double? _baseline;
+  static const _syncTolerance = 0.02;
   DateTime _lastLocalCommandAt = DateTime.fromMillisecondsSinceEpoch(0);
   double? _lastSynced;
   DateTime _syncedMovedAt = DateTime.fromMillisecondsSinceEpoch(0);
@@ -1061,6 +1066,11 @@ class _ThrottleLeverState extends State<_ThrottleLever>
           : _lastLocalCommandAt;
       if (now.difference(quietSince) < _simSettleTime) return;
       _awaitingSim = false;
+      _baseline = synced;
+    }
+    if (_baseline != null && synced != null) {
+      if ((synced - _baseline!).abs() < _syncTolerance) return;
+      _baseline = null;
     }
     // Compare with _animTo, not _value, so rebuilds with the same reading
     // don't restart the animation.

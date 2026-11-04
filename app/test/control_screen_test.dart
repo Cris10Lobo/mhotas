@@ -162,11 +162,16 @@ void main() {
       await tester.pumpAndSettle();
       expect(tester.getCenter(knob).dy, commandedY);
 
-      // Once the sim has stopped moving (here, short of the command), the
-      // knob follows it.
+      // Where the sim stops (here, short of the command, as the A32NX's
+      // detents do) is its reading of our command, not a move to follow.
       await tester
           .runAsync(() => Future.delayed(const Duration(milliseconds: 600)));
       controller.add(_telemetry(throttlePercent: 0.2));
+      await tester.pumpAndSettle();
+      expect(tester.getCenter(knob).dy, commandedY);
+
+      // A later move in the sim is followed.
+      controller.add(_telemetry(throttlePercent: 0.05));
       await tester.pumpAndSettle();
       expect(tester.getCenter(knob).dy, greaterThan(commandedY));
     });
