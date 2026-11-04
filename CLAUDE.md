@@ -82,6 +82,8 @@ Against a live sim and a phone on `adb` (wireless debugging works), `app/integra
 drives the real flying screen and checks each command through TELEMETRY; `survey_test.dart` exercises
 every control and logs, for reading alongside `simprobe -watch`. Both take
 `--dart-define=MHOTAS_SERVER=<pc-ip>:9750` and need the aircraft on the ground, parking brake set.
+`a32nx_clb_test.dart` takes the same define but runs in flight: the A32NX airborne with autopilot and
+A/THR on, and the tester changing the FCU speed during its hold.
 
 ### Running the live-sim tests
 

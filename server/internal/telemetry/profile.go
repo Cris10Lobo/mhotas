@@ -49,10 +49,15 @@ func newOverrides(p *config.AircraftProfile) overrides {
 	return o
 }
 
-// apply sets the overridden fields; values (the read vars, in names order)
-// is skipped until a reading of the right length has arrived.
+// ready reports whether values (the read vars, in names order) is a full
+// reading. Until it is, overridden fields still hold their stock values.
+func (o overrides) ready(values []float64) bool {
+	return len(values) == len(o.fields)
+}
+
+// apply sets the overridden fields; values is skipped until ready.
 func (o overrides) apply(t *protocol.Telemetry, values []float64) {
-	if len(values) == len(o.fields) {
+	if o.ready(values) {
 		for i, field := range o.fields {
 			setField(t, field, values[i])
 		}
@@ -68,11 +73,22 @@ func setField(t *protocol.Telemetry, field string, v float64) {
 		t.FlapHandleIndex = int8(math.Round(v))
 	case "flaps_max":
 		t.FlapHandleIndexMax = int8(math.Round(v))
+	case "throttle_quadrant":
+		if v < 25 {
+			t.ThrottlePercent = clampUnit(float32((v - 25) / 25))
+		} else {
+			t.ThrottlePercent = clampUnit(float32((v - 25) / 75))
+		}
 	case "spoilers_handle":
 		t.SpoilersHandle = clampUnit(float32(v))
 	case "spoilers_armed":
 		t.SpoilersArmed = v != 0
 	case "parking_brake":
 		t.ParkingBrakeSet = v != 0
+	case "autopilot":
+		t.AutopilotMaster = v != 0
+	case "autothrottle_status":
+		// 1 is only armed: thrust stays manual, e.g. a lever above CLB.
+		t.AutothrottleActive = v == 2
 	}
 }

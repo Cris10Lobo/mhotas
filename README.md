@@ -176,7 +176,7 @@ You only have to do this once. MSFS saves the bindings in a profile.
 - Reverse speedbrake (Settings, Speedbrake): turn on if the sim deploys when the phone's lever is
   retracted, instead of changing the binding in MSFS.
 - Aircraft profiles (`aircraft` in `config.json`): some aircraft, like the FlyByWire A32NX, keep their
-  parking brake, spoiler and flap state in their own variables, so the phone would show the wrong state.
+  throttle lever, autopilot, autothrust, parking brake, spoiler and flap state in their own variables, so the phone would show the wrong state.
   A profile tells the server which variable to read for an aircraft whose title contains a given text.
   The A32NX one is built in; the server logs the loaded aircraft's title and which profile it picked.
 

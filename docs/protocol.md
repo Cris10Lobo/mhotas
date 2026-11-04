@@ -109,8 +109,10 @@ not required for `AXIS`/`BUTTON` processing to function.
 
 The simvars named above are the defaults. An aircraft that keeps its real state elsewhere gets a profile
 in the server's `config.json` (`aircraft`, matched on the sim's `TITLE`) that reads a different variable
-for `flapHandleIndex`/`flapHandleIndexMax`/`spoilersHandle`/`spoilersArmed`/`parkingBrakeSet`. The FBW
-A32NX ships with one: its stock parking brake never sets, its stock spoiler arm stays on, its stock
+for `flapHandleIndex`/`flapHandleIndexMax`/`throttlePercent`/`spoilersHandle`/`spoilersArmed`/`parkingBrakeSet`/`autopilotMaster`/`autothrottleActive`.
+The FBW A32NX ships with one: its stock throttle follows autothrust's commanded thrust instead of the lever
+sitting in its detent, its stock autopilot and autothrottle flags stay off with both engaged, its stock
+parking brake never sets, its stock spoiler arm stays on, its stock
 spoiler handle is a slewed surface position capped at 40% on the ground, and its stock flap index trails
 the handle by seconds and skips 1.
 
