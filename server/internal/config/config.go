@@ -57,9 +57,10 @@ type AircraftProfile struct {
 }
 
 // TelemetryFields are the AircraftProfile.Telemetry keys, in TELEMETRY's
-// units: flap index and max as integers, spoilers_handle 0..1, the rest
-// nonzero = true.
-var TelemetryFields = []string{"flaps_index", "flaps_max", "spoilers_handle", "spoilers_armed", "parking_brake"}
+// units: flap index and max as integers, spoilers_handle 0..1,
+// throttle_quadrant 0 (full reverse), 25 (idle) .. 100 (full forward),
+// autothrottle_status 2 = driving the thrust, the rest nonzero = true.
+var TelemetryFields = []string{"flaps_index", "flaps_max", "throttle_quadrant", "spoilers_handle", "spoilers_armed", "parking_brake", "autopilot", "autothrottle_status"}
 
 // Config is the full server configuration.
 type Config struct {
@@ -95,14 +96,21 @@ func Default() Config {
 		Aircraft: []AircraftProfile{{
 			// Its stock flap index trails the handle by seconds as the flaps
 			// travel and skips 1, and its stock spoiler handle is a slewed
-			// surface position capped at 40% on the ground.
+			// surface position capped at 40% on the ground. Its stock throttle
+			// follows autothrust's commanded thrust, not the lever, which stays
+			// in its detent; mirroring that dragged the phone's lever and the
+			// vJoy axis out of CLB. Its stock autopilot and autothrottle flags
+			// stay off with both engaged.
 			TitleContains: "A32NX",
 			Telemetry: map[string]string{
-				"flaps_index":     "L:A32NX_FLAPS_HANDLE_INDEX",
-				"flaps_max":       "4",
-				"spoilers_handle": "L:A32NX_SPOILERS_HANDLE_POSITION",
-				"spoilers_armed":  "L:A32NX_SPOILERS_ARMED",
-				"parking_brake":   "L:A32NX_PARK_BRAKE_LEVER_POS",
+				"flaps_index":         "L:A32NX_FLAPS_HANDLE_INDEX",
+				"flaps_max":           "4",
+				"throttle_quadrant":   "L:A32NX_3D_THROTTLE_LEVER_POSITION_1",
+				"spoilers_handle":     "L:A32NX_SPOILERS_HANDLE_POSITION",
+				"spoilers_armed":      "L:A32NX_SPOILERS_ARMED",
+				"parking_brake":       "L:A32NX_PARK_BRAKE_LEVER_POS",
+				"autopilot":           "L:A32NX_AUTOPILOT_ACTIVE",
+				"autothrottle_status": "L:A32NX_AUTOTHRUST_STATUS",
 			},
 		}},
 	}

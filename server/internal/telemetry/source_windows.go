@@ -84,8 +84,12 @@ func (s *Source) Run(ctx context.Context, sink Sink) error {
 				MachHold:               as.MachHold,
 				Paused:                 s.client.Paused(),
 			})
-			over.apply(&t, s.client.LatestExtra())
-			if s.syncer != nil {
+			extra := s.client.LatestExtra()
+			over.apply(&t, extra)
+			// The first resync after startup writes the reading to the axis, and
+			// a stock reading the profile replaces can pull the lever off its
+			// detent (the A32NX's follows autothrust's thrust).
+			if s.syncer != nil && over.ready(extra) {
 				s.syncer.SyncThrottle(float64(t.ThrottlePercent), t.AutothrottleActive)
 			}
 			if have && t == last && time.Since(lastSent) < keepaliveInterval {
